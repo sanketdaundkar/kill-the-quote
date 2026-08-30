@@ -135,8 +135,14 @@ def gap_fill_carried_forward(vendor_name, rows, rfx_spec, extraction):
     return rows
 
 
-def build_comparison_table(extraction_dir: str, rfx_spec: dict) -> pd.DataFrame:
+def build_comparison_table(extraction_dir: str, rfx_spec: dict, overrides: dict = None) -> pd.DataFrame:
+    """overrides, if given, is the dict from app.review.overrides.load_overrides() -
+    an approved line's price correction (if any) is applied here, and its
+    needs_buyer_review flag clears, so an approval actually changes what the
+    rest of the app sees - the comparison totals, the analyst chat, all of
+    it - not just what this one table displays."""
     rfx_by_code = {li["item_code"]: li for li in rfx_spec["line_items"]}
+    overrides = overrides or {}
     all_rows = []
     vendor_meta = {}
 
@@ -152,6 +158,21 @@ def build_comparison_table(extraction_dir: str, rfx_spec: dict) -> pd.DataFrame:
         vendor_name = extraction.get("vendor_name", fname)
         rows = [normalize_line(vendor_name, li, rfx_by_code) for li in extraction.get("line_items", [])]
         rows = gap_fill_carried_forward(vendor_name, rows, rfx_spec, extraction)
+
+        for row in rows:
+            override = overrides.get(f"{vendor_name}::{row['item_code']}")
+            if override and override.get("approved"):
+                if override.get("override_unit_price_inr") is not None:
+                    row["unit_price_inr"] = override["override_unit_price_inr"]
+                row["needs_buyer_review"] = False
+                row["buyer_approved"] = True
+                row["buyer_edited"] = bool(override.get("edited"))
+                row["approval_note"] = override.get("note") or ""
+            else:
+                row["buyer_approved"] = False
+                row["buyer_edited"] = False
+                row["approval_note"] = ""
+
         all_rows.extend(rows)
         vendor_meta[vendor_name] = {
             "vendor_ref": extraction.get("vendor_ref"),

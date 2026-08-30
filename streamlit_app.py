@@ -21,6 +21,7 @@ from app.comparison.styled_view import (
 from app.chat.analyst import ask_analyst
 from app.generation.rfx_copilot import copilot_turn
 from app.generation.rfx_docx import build_rfx_docx_bytes
+from app.review.overrides import approve_line, revoke_approval, load_overrides
 
 st.set_page_config(page_title="Aerchain - RFx Copilot", layout="wide")
 
@@ -124,17 +125,31 @@ def vendor_display_label(fname: str, is_uploaded: bool, already_extracted: set) 
     return fname
 
 
-def flagged_count_for_file(fname: str) -> int:
-    """Counts how many of a single vendor's extracted line items are
-    flagged for buyer review - reads their extraction JSON directly, so
-    this works even before the full comparison table has been built."""
+def flagged_count_for_file(fname: str, overrides: dict = None) -> int:
+    """Counts how many of a single vendor's extracted line items are still
+    open for review - flagged AND not yet approved. Reads their extraction
+    JSON directly (works even before the full comparison table is built)
+    and cross-checks against any buyer approvals, so this badge doesn't
+    keep showing a stale count after something's been resolved."""
     extraction_path = os.path.join(EXTRACTION_DIR, os.path.splitext(fname)[0] + ".json")
     if not os.path.exists(extraction_path):
         return 0
+    if overrides is None:
+        overrides = load_overrides()
     try:
         with open(extraction_path) as f:
             data = json.load(f)
-        return sum(1 for li in data.get("line_items", []) if li.get("needs_buyer_review"))
+        vendor_name = data.get("vendor_name", fname)
+        count = 0
+        for li in data.get("line_items", []):
+            if not li.get("needs_buyer_review"):
+                continue
+            item_code = li.get("matched_item_code")
+            override = overrides.get(f"{vendor_name}::{item_code}") if item_code else None
+            if override and override.get("approved"):
+                continue
+            count += 1
+        return count
     except (OSError, json.JSONDecodeError):
         return 0
 
@@ -478,6 +493,7 @@ def page_vendor_responses():
         fname for fname in sources
         if os.path.exists(os.path.join(EXTRACTION_DIR, os.path.splitext(fname)[0] + ".json"))
     }
+    review_overrides = load_overrides()
     for fname, (path, is_uploaded) in sources.items():
         label = vendor_display_label(fname, is_uploaded, already_extracted)
         with st.expander(label):
@@ -490,7 +506,7 @@ def page_vendor_responses():
                 f'<span class="rfx-live-badge {status_cls}">{status_text}</span>'
             )
             if fname in already_extracted:
-                flagged = flagged_count_for_file(fname)
+                flagged = flagged_count_for_file(fname, review_overrides)
                 if flagged:
                     badges_html += f'<span class="rfx-flag-badge">{flagged} flagged for review</span>'
             st.markdown(badges_html, unsafe_allow_html=True)
@@ -567,8 +583,8 @@ def page_vendor_responses():
 
 def page_review():
     st.header("Review")
-    st.caption("Every extracted line that needs a second look, grouped by vendor - so nothing "
-               "flagged gets missed before you trust a number enough to act on it.")
+    st.caption("Every extracted line that needs a second look, grouped by vendor - approve one "
+               "as-is or correct the price first. Every decision is logged, not just applied.")
 
     existing = [f for f in os.listdir(EXTRACTION_DIR) if f.endswith(".json")] if os.path.exists(EXTRACTION_DIR) else []
     if not existing:
@@ -576,46 +592,90 @@ def page_review():
         return
 
     rfx = load_or_init_rfx()
-    df, vendor_meta = build_comparison_table(EXTRACTION_DIR, rfx)
+    overrides = load_overrides()
+    df, vendor_meta = build_comparison_table(EXTRACTION_DIR, rfx, overrides=overrides)
     if df.empty:
         st.warning("Extraction result(s) on disk don't have any usable line items yet - "
                    "re-run extraction on the Vendor Responses tab.")
         return
 
     flagged_all = df[df["needs_buyer_review"] == True]
-    total_flagged = len(flagged_all)
-    if total_flagged == 0:
+    approved_all = df[df["buyer_approved"] == True]
+
+    if flagged_all.empty and approved_all.empty:
         st.success("Nothing flagged for review across any extracted vendor.")
         return
 
-    st.metric("Total open items across all vendors", total_flagged)
+    st.metric("Open items across all vendors", len(flagged_all))
     st.divider()
 
     for vendor in sorted(df["vendor_name"].unique()):
         vdf = df[df["vendor_name"] == vendor]
         flagged = vdf[vdf["needs_buyer_review"] == True]
-        meta = vendor_meta.get(vendor) or {}
+        if flagged.empty:
+            continue
         lines_extracted = vdf["item_code"].nunique()
         conf = vdf["match_confidence"].dropna()
         mean_conf = f"{conf.mean() * 100:.0f}%" if len(conf) else "n/a"
 
-        with st.container():
-            st.markdown(
-                f'<div class="rfx-card" style="margin-bottom:12px;">'
-                f'<div class="rfx-card-name">{vendor}</div>'
-                f'<div class="rfx-card-meta">{lines_extracted}/{len(rfx["line_items"])} lines extracted '
-                f'&middot; Mean confidence: {mean_conf} &middot; Flagged for review: {len(flagged)}</div>'
-                f'</div>',
-                unsafe_allow_html=True,
-            )
-            if not flagged.empty:
-                with st.expander(f"Review {len(flagged)} open item(s) for {vendor}"):
-                    st.dataframe(
-                        flagged[["item_code", "rfx_description", "unit_price_inr", "unit_basis",
-                                 "carried_forward", "review_reason"]]
-                        .sort_values("item_code"),
-                        use_container_width=True,
+        st.markdown(
+            f'<div class="rfx-card" style="margin-bottom:12px;">'
+            f'<div class="rfx-card-name">{vendor}</div>'
+            f'<div class="rfx-card-meta">{lines_extracted}/{len(rfx["line_items"])} lines extracted '
+            f'&middot; Mean confidence: {mean_conf} &middot; Flagged for review: {len(flagged)}</div>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+        with st.expander(f"Review {len(flagged)} open item(s) for {vendor}", expanded=False):
+            for _, line in flagged.sort_values("item_code").iterrows():
+                item_code = line["item_code"]
+                widget_key = f"{vendor}__{item_code}".replace(" ", "_")
+                st.markdown(f"**{item_code} - {line['rfx_description']}**")
+                st.caption(f"Flagged: {line['review_reason']}")
+                col1, col2 = st.columns([1, 2])
+                with col1:
+                    current_price = line["unit_price_inr"] if pd.notna(line["unit_price_inr"]) else 0.0
+                    new_price = st.number_input(
+                        "Unit price (INR)", value=float(current_price), min_value=0.0,
+                        key=f"price_{widget_key}",
+                        help="Change this if you've confirmed the correct figure with the vendor - "
+                             "leave as-is to approve the extracted value unchanged.",
                     )
+                with col2:
+                    note = st.text_input(
+                        "Note (optional)", key=f"note_{widget_key}",
+                        placeholder="e.g. Confirmed via call with vendor on 30-Aug",
+                    )
+                if st.button("Approve this line", key=f"approve_{widget_key}", type="primary"):
+                    approve_line(
+                        vendor, item_code,
+                        original_unit_price_inr=float(current_price) if current_price else None,
+                        new_unit_price_inr=new_price,
+                        note=note,
+                    )
+                    st.rerun()
+                st.divider()
+
+    if not approved_all.empty:
+        st.subheader("Approved items (audit trail)")
+        for _, line in approved_all.sort_values(["vendor_name", "item_code"]).iterrows():
+            vendor = line["vendor_name"]
+            item_code = line["item_code"]
+            override = overrides.get(f"{vendor}::{item_code}", {})
+            edited_tag = " (price corrected)" if line["buyer_edited"] else ""
+            with st.expander(f"{vendor} - {item_code}{edited_tag}"):
+                if line["buyer_edited"]:
+                    st.write(f"Original: Rs {override.get('original_unit_price_inr'):,.0f} "
+                             f"-> Approved at: Rs {override.get('override_unit_price_inr'):,.0f}")
+                else:
+                    st.write(f"Approved as extracted: Rs {line['unit_price_inr']:,.0f}")
+                st.caption(f"Approved at {override.get('approved_at', 'unknown time')}")
+                if override.get("note"):
+                    st.write(f"Note: {override['note']}")
+                widget_key = f"{vendor}__{item_code}".replace(" ", "_")
+                if st.button("Revoke approval", key=f"revoke_{widget_key}"):
+                    revoke_approval(vendor, item_code, note="Revoked from Review tab")
+                    st.rerun()
 
 
 def page_comparison():
@@ -629,7 +689,7 @@ def page_comparison():
         return
 
     rfx = load_or_init_rfx()
-    df, vendor_meta = build_comparison_table(EXTRACTION_DIR, rfx)
+    df, vendor_meta = build_comparison_table(EXTRACTION_DIR, rfx, overrides=load_overrides())
     if df.empty:
         st.warning("Extraction result(s) on disk don't have any usable line items yet - "
                    "re-run extraction on the Vendor Responses tab.")
