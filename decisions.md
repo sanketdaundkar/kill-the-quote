@@ -41,11 +41,24 @@ each clause against the actual code, not just design intent:
 - **Questionnaire answers alongside the numbers**: rendered as a real per-question table (the
   actual question text, not just "Q1"), not a raw JSON dump - on the same Comparison tab as
   the numeric table, one expander per vendor.
-- **Attached docs alongside the numbers**: this one was genuinely missing in an earlier pass -
-  the original vendor file was only viewable on the Vendor Responses tab. Fixed: each vendor's
-  expander on the Comparison tab now includes their actual original document (rendered pages
-  for a PDF, a real table for Excel, the image itself for a photo) plus a download button,
-  resolved via the extraction's own record of which file it came from.
+- **Attached docs alongside the numbers**: added in an earlier pass (each vendor's expander on
+  the Comparison tab included their actual original document), then removed at the user's
+  request to keep that tab focused on the questionnaire/terms table - source documents remain
+  fully viewable on the Vendor Responses tab instead.
+
+## Compliance with "text answers, tables, charts, exports"
+The brief's description of the analyst layer names four output forms explicitly. Checked each
+against the code, found two that didn't exist at all and one that was faked:
+- **Text answers**: real, always was.
+- **Tables**: was faked - a DataFrame result got `.to_string()`'d into plain text that looked
+  tabular but wasn't. Fixed: `run_pandas_query` results that are DataFrames now render as a
+  real `st.dataframe` below the answer, with its own CSV export button.
+- **Charts**: didn't exist - there was no way for the model to produce one, ever. Added a
+  second tool, `render_chart`, that the model calls explicitly (bar or line) when a chart
+  would help more than prose - never auto-triggered by keyword-matching the question, so it's
+  the model's judgment call, not a heuristic guessing what "looks chart-worthy."
+- **Exports**: didn't exist - fixed with a "Export full comparison to CSV" button plus a
+  per-answer "Export this table to CSV" button whenever a query returns tabular data.
 
 ## What I built
 An end-to-end flow for one category (IT hardware, 30 line items, 5 vendors, real messiness):

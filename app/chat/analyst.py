@@ -29,7 +29,11 @@ TOOLS = [
             "sort_values, idxmin, merge, etc. df columns: vendor_name, item_code, "
             "rfx_description, qty_requested, qty_quoted, qty_gap, unit_price_inr, "
             "unit_basis, box_size, match_confidence, needs_buyer_review, review_reason, "
-            "carried_forward, notes."
+            "carried_forward, notes. When `result` is a DataFrame, it's shown to the buyer "
+            "as a real interactive table (with a CSV download button) below your answer - "
+            "not just pasted as text - so prefer returning a DataFrame over a plain string "
+            "whenever the answer is naturally tabular (a ranking, a per-vendor breakdown, a "
+            "filtered line list)."
         ),
         "input_schema": {
             "type": "object",
@@ -38,7 +42,28 @@ TOOLS = [
             },
             "required": ["code"],
         },
-    }
+    },
+    {
+        "name": "render_chart",
+        "description": (
+            "Displays a bar or line chart to the buyer, right below your answer. Use this "
+            "whenever a chart would make the comparison clearer than prose or a table alone - "
+            "e.g. price by vendor for one item, coverage % by vendor, a price trend across a "
+            "sequence. Compute the labels/values with run_pandas_query first, then call this "
+            "with the actual numbers - never estimate values for the chart."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "title": {"type": "string"},
+                "chart_type": {"type": "string", "enum": ["bar", "line"]},
+                "labels": {"type": "array", "items": {"type": "string"}, "description": "X-axis categories, e.g. vendor names."},
+                "series_name": {"type": "string", "description": "What the values represent, e.g. 'Unit price (INR)'."},
+                "values": {"type": "array", "items": {"type": "number"}},
+            },
+            "required": ["title", "chart_type", "labels", "series_name", "values"],
+        },
+    },
 ]
 
 SYSTEM_PROMPT = """You are a procurement analyst assistant. You are working over a comparison
@@ -47,7 +72,8 @@ ask you natural-language questions - simple lookups, cross-vendor comparisons, c
 splits ("cheapest per line among vendors who passed the quality questionnaire"), and questions
 about data quality ("which lines am I most exposed on"). Use the run_pandas_query tool to
 actually compute answers from the real data - never guess or state a number you have not
-verified via the tool.
+verified via the tool. Use render_chart when a chart would genuinely help - don't force one
+onto a question that's better answered with a number or a sentence.
 
 Ground rules:
 - If a line has needs_buyer_review=True or carried_forward=True, mention that when it's
@@ -71,8 +97,12 @@ Ground rules:
   price-competitiveness measure such as how often that vendor is cheapest per line or their
   average rank), then reason about the trade-offs in prose and give a recommendation with your
   reasoning stated plainly so the buyer can weigh it differently if they want to.
-- After you have the answer, respond in plain prose (with a short table if it helps) - do not
-  dump raw JSON at the buyer.
+- Return DataFrames from run_pandas_query rather than pre-formatted text whenever the answer
+  is naturally tabular - it renders as a real table with an export button, which is more
+  useful to the buyer than the same numbers described in a sentence.
+- After you have the answer, respond in plain prose that stands on its own even without the
+  table/chart (a screen reader or a copy-pasted answer should still make sense) - do not dump
+  raw JSON at the buyer.
 - If the data can't answer the question (nothing matched, all flagged, etc.), say that plainly
   rather than forcing an answer.
 """
@@ -108,8 +138,10 @@ def _stringify_result(result):
         return str(result)
 
 
-def ask_analyst(question: str, df: pd.DataFrame, vendor_meta: dict, history=None) -> tuple[str, list]:
-    """Runs one turn of the analyst chat. Returns (answer_text, updated_history)."""
+def ask_analyst(question: str, df: pd.DataFrame, vendor_meta: dict, history=None):
+    """Runs one turn of the analyst chat. Returns
+    (answer_text, updated_history, last_table_df, chart_spec) - the last two
+    are None when this turn's answer wasn't naturally tabular/chartable."""
     client = _client()
     messages = list(history) if history else []
     messages.append({"role": "user", "content": question})
@@ -120,6 +152,8 @@ def ask_analyst(question: str, df: pd.DataFrame, vendor_meta: dict, history=None
     persistent_env = {"df": df, "vendor_meta": vendor_meta, "pd": pd}
 
     trace = []
+    last_table = None
+    chart_spec = None
     for _ in range(8):  # cap tool-use loop
         resp = client.messages.create(
             model=MODEL,
@@ -132,16 +166,27 @@ def ask_analyst(question: str, df: pd.DataFrame, vendor_meta: dict, history=None
 
         if resp.stop_reason != "tool_use":
             text = "".join(b.text for b in resp.content if b.type == "text")
-            return text, messages
+            return text, messages, last_table, chart_spec
 
         tool_results = []
         for block in resp.content:
             if block.type != "tool_use":
                 continue
+
+            if block.name == "render_chart":
+                chart_spec = dict(block.input)
+                tool_results.append({
+                    "type": "tool_result", "tool_use_id": block.id,
+                    "content": "Chart displayed to the buyer.",
+                })
+                continue
+
             code = block.input.get("code", "")
             trace.append(code)
             try:
                 result = _safe_exec(code, persistent_env)
+                if isinstance(result, pd.DataFrame):
+                    last_table = result
                 output = _stringify_result(result)
             except Exception as e:
                 output = f"ERROR running query: {e}"
@@ -152,4 +197,5 @@ def ask_analyst(question: str, df: pd.DataFrame, vendor_meta: dict, history=None
             })
         messages.append({"role": "user", "content": tool_results})
 
-    return "I ran out of steps trying to answer that - try breaking the question into smaller parts.", messages
+    return ("I ran out of steps trying to answer that - try breaking the question into smaller parts.",
+            messages, last_table, chart_spec)

@@ -664,26 +664,53 @@ def page_analyst():
         st.session_state.analyst_history = []
         st.session_state.analyst_display = []
 
-    for role, text in st.session_state.analyst_display:
-        with st.chat_message(role):
-            st.write(text)
+    st.download_button(
+        "Export full comparison to CSV", key="export_full_comparison",
+        data=st.session_state.comparison_df.to_csv(index=False).encode("utf-8"),
+        file_name="vendor_comparison.csv", mime="text/csv",
+    )
+
+    for i, turn in enumerate(st.session_state.analyst_display):
+        with st.chat_message(turn["role"]):
+            st.write(turn["text"])
+            table = turn.get("table")
+            if table is not None:
+                st.dataframe(table, use_container_width=True)
+                st.download_button(
+                    "Export this table to CSV", key=f"export_table_{i}",
+                    data=table.to_csv(index=False).encode("utf-8"),
+                    file_name=f"analyst_result_{i}.csv", mime="text/csv",
+                )
+            chart = turn.get("chart")
+            if chart is not None:
+                st.markdown(f"**{chart.get('title', 'Chart')}**")
+                chart_df = pd.DataFrame(
+                    {chart.get("series_name", "Value"): chart.get("values", [])},
+                    index=chart.get("labels", []),
+                )
+                if chart.get("chart_type") == "line":
+                    st.line_chart(chart_df)
+                else:
+                    st.bar_chart(chart_df)
 
     q = st.chat_input("Ask a question about the vendor comparison...")
     if q:
         if not has_api_key():
             st.error("Add your ANTHROPIC_API_KEY in the sidebar first.")
         else:
-            st.session_state.analyst_display.append(("user", q))
+            st.session_state.analyst_display.append({"role": "user", "text": q})
             with st.spinner("Analyzing..."):
                 try:
-                    answer, history = ask_analyst(
+                    answer, history, table, chart = ask_analyst(
                         q, st.session_state.comparison_df, st.session_state.vendor_meta,
                         st.session_state.analyst_history,
                     )
                     st.session_state.analyst_history = history
-                    st.session_state.analyst_display.append(("assistant", answer))
+                    st.session_state.analyst_display.append(
+                        {"role": "assistant", "text": answer, "table": table, "chart": chart}
+                    )
                 except Exception as e:
-                    st.session_state.analyst_display.append(("assistant", f"Error: {e}"))
+                    st.session_state.analyst_display.append({"role": "assistant", "text": f"Error: {e}"})
             st.rerun()
 
 
