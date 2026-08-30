@@ -57,9 +57,19 @@ Also extract:
 Do not fabricate numbers. If something is illegible or absent, say so via needs_buyer_review
 and a clear review_reason rather than inventing a plausible-looking value.
 
-Keep every string field concise - this is a structured data extraction task, not a narrative.
-The "notes" field on a line item should usually be empty ("") unless there's something
-specific and useful to flag; when used, keep it to one short clause.
+Keep every string field short - this is a structured data extraction task, not a narrative.
+Field-by-field brevity rules (these matter - verbose output on a 20-30 line vendor response
+can run past the token budget):
+- vendor_line_ref: a few words at most - a row number, item code, or short label the vendor
+  used. NOT a restatement of the full description.
+- description_as_quoted: paraphrase to under 12 words. Don't reproduce the vendor's full
+  original text - you're pointing at which line this is, not quoting it verbatim.
+- notes: usually empty (""). Only fill it for something genuinely specific to that line, in
+  well under 15 words.
+- review_reason: one short clause, under 15 words.
+If a document-wide issue affects many lines the same way (e.g. an image is uniformly skewed,
+or a vendor didn't answer the questionnaire at all), say that ONCE in extraction_warnings -
+do not repeat a version of the same caveat in every affected line's notes/review_reason.
 
 Respond with ONLY valid JSON matching this shape, no markdown fences, no commentary:
 {
@@ -128,14 +138,15 @@ def build_user_content(rfx_spec: dict, kind: str, payload):
     raise ValueError(kind)
 
 
-def extract_vendor_response(file_path: str, rfx_spec: dict) -> dict:
-    kind, payload = read_vendor_file(file_path)
+def _call_extraction(content, max_tokens: int, extra_instruction: str = ""):
     client = _client()
-    content = build_user_content(rfx_spec, kind, payload)
+    system_prompt = EXTRACTION_SYSTEM_PROMPT
+    if extra_instruction:
+        system_prompt = system_prompt + "\n\n" + extra_instruction
     resp = client.messages.create(
         model=MODEL,
-        max_tokens=16000,
-        system=EXTRACTION_SYSTEM_PROMPT,
+        max_tokens=max_tokens,
+        system=system_prompt,
         messages=[{"role": "user", "content": content}],
     )
     raw = "".join(block.text for block in resp.content if block.type == "text")
@@ -144,12 +155,36 @@ def extract_vendor_response(file_path: str, rfx_spec: dict) -> dict:
         raw = raw.split("```")[1]
         if raw.startswith("json"):
             raw = raw[4:]
+    return resp, raw
+
+
+def extract_vendor_response(file_path: str, rfx_spec: dict) -> dict:
+    kind, payload = read_vendor_file(file_path)
+    content = build_user_content(rfx_spec, kind, payload)
+
+    resp, raw = _call_extraction(content, max_tokens=16000)
+
     if resp.stop_reason == "max_tokens":
-        raise RuntimeError(
-            f"Extraction for {file_path} was cut off before finishing (hit the token limit). "
-            f"This usually means the vendor file has more line items or text than expected - "
-            f"try again, or increase max_tokens in extract.py if it keeps happening."
+        # One automatic retry with a much stricter brevity instruction and a
+        # higher ceiling, rather than just failing - this is the difference
+        # between "click the button again and hope" and actually recovering.
+        resp, raw = _call_extraction(
+            content, max_tokens=24000,
+            extra_instruction=(
+                "IMPORTANT - your previous attempt at this exact task ran out of space before "
+                "finishing. Be significantly terser this time: vendor_line_ref under 5 words, "
+                "description_as_quoted under 8 words, notes and review_reason empty unless "
+                "truly necessary and then under 10 words. Every line item still needs to be "
+                "included - cut verbosity, not coverage."
+            ),
         )
+        if resp.stop_reason == "max_tokens":
+            raise RuntimeError(
+                f"Extraction for {file_path} was cut off before finishing, even after a "
+                f"stricter retry. This vendor file may have unusually many line items - "
+                f"consider raising max_tokens further in extract.py."
+            )
+
     try:
         data = json.loads(raw)
     except json.JSONDecodeError as e:
