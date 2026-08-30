@@ -34,26 +34,32 @@ abbreviate, and use their own catalog language). For each quoted line, determine
   units per box) so downstream code can normalize to per-unit price. If the vendor's box
   size is ambiguous or not stated, set unit_basis to "unknown" and explain in notes - do not
   guess a box size.
-- needs_buyer_review (boolean) and review_reason (string) whenever: the match confidence is
-  below 0.75, unit_basis is unknown, the vendor's quantity quoted differs from what was
-  requested, pricing language is vague (e.g. "same as last year" with no number given to you),
-  or anything else a careful category buyer would want to double check before trusting this
-  number in a ₹4 crore decision.
+- needs_buyer_review (boolean) and review_reason (string, ONE short sentence, under 20 words)
+  whenever: the match confidence is below 0.75, unit_basis is unknown, the vendor's quantity
+  quoted differs from what was requested, pricing language is vague (e.g. "same as last year"
+  with no number given to you), or anything else a careful category buyer would want to
+  double check before trusting this number in a ₹4 crore decision.
 
 Also extract:
 - vendor_name, vendor_ref (their quote/reference number if present), quote_date if present.
 - questionnaire_answers: map of Q1-Q5 (as defined in the RFx questionnaire) to the vendor's
   answer if you can find it, even if phrased informally in prose - "yes to pretty much
   everything same as before" is a real answer, extract your best interpretation and mark low
-  confidence rather than skipping it. Use null if genuinely not addressed at all.
+  confidence rather than skipping it. Use null if genuinely not addressed at all. Keep each
+  answer to a short phrase, not a full quote of the vendor's prose.
 - commercial_terms: payment_terms, warranty, freight_terms, delivery_weeks - whatever is
-  stated, as free text. Use null for anything not mentioned.
-- extraction_warnings: a list of short strings for anything unusual you noticed reading this
-  document (garbled/skewed text if it's a photo, items you could not read at all, footnotes
-  that change the effective price, discounts buried away from the main table, etc).
+  stated, as short free text (a few words each). Use null for anything not mentioned.
+- extraction_warnings: a list of short strings (one short sentence each) for anything unusual
+  you noticed reading this document (garbled/skewed text if it's a photo, items you could not
+  read at all, footnotes that change the effective price, discounts buried away from the main
+  table, etc). Keep this list to the genuinely notable items, not one entry per line.
 
 Do not fabricate numbers. If something is illegible or absent, say so via needs_buyer_review
 and a clear review_reason rather than inventing a plausible-looking value.
+
+Keep every string field concise - this is a structured data extraction task, not a narrative.
+The "notes" field on a line item should usually be empty ("") unless there's something
+specific and useful to flag; when used, keep it to one short clause.
 
 Respond with ONLY valid JSON matching this shape, no markdown fences, no commentary:
 {
@@ -123,7 +129,7 @@ def extract_vendor_response(file_path: str, rfx_spec: dict) -> dict:
     content = build_user_content(rfx_spec, kind, payload)
     resp = client.messages.create(
         model=MODEL,
-        max_tokens=4000,
+        max_tokens=8000,
         system=EXTRACTION_SYSTEM_PROMPT,
         messages=[{"role": "user", "content": content}],
     )
@@ -133,6 +139,12 @@ def extract_vendor_response(file_path: str, rfx_spec: dict) -> dict:
         raw = raw.split("```")[1]
         if raw.startswith("json"):
             raw = raw[4:]
+    if resp.stop_reason == "max_tokens":
+        raise RuntimeError(
+            f"Extraction for {file_path} was cut off before finishing (hit the token limit). "
+            f"This usually means the vendor file has more line items or text than expected - "
+            f"try again, or increase max_tokens in extract.py if it keeps happening."
+        )
     try:
         data = json.loads(raw)
     except json.JSONDecodeError as e:

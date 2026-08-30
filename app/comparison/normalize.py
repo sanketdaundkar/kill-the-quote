@@ -143,7 +143,12 @@ def build_comparison_table(extraction_dir: str, rfx_spec: dict) -> pd.DataFrame:
     for fname in sorted(os.listdir(extraction_dir)):
         if not fname.endswith(".json"):
             continue
-        extraction = _load_json(os.path.join(extraction_dir, fname))
+        try:
+            extraction = _load_json(os.path.join(extraction_dir, fname))
+        except (json.JSONDecodeError, OSError):
+            # Corrupted or partially-written file from an earlier failed run -
+            # skip it rather than take down the whole comparison table.
+            continue
         vendor_name = extraction.get("vendor_name", fname)
         rows = [normalize_line(vendor_name, li, rfx_by_code) for li in extraction.get("line_items", [])]
         rows = gap_fill_carried_forward(vendor_name, rows, rfx_spec, extraction)

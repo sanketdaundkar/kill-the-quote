@@ -208,6 +208,17 @@ def render_vendor_preview(path: str, ext: str, fname: str):
         st.write(f"No preview available for {ext} files ({os.path.getsize(path)/1024:.0f} KB) - use the download button above.")
 
 
+def remove_uploaded_file(fname: str):
+    """Deletes an uploaded vendor file and any cached extraction result for it,
+    so a removed vendor doesn't linger as stale data in the comparison table."""
+    path = os.path.join(UPLOAD_DIR, fname)
+    if os.path.exists(path):
+        os.remove(path)
+    extraction_path = os.path.join(EXTRACTION_DIR, os.path.splitext(fname)[0] + ".json")
+    if os.path.exists(extraction_path):
+        os.remove(extraction_path)
+
+
 def page_vendor_responses():
     st.header("2. Vendor responses")
     st.caption("Five vendors, five formats, on purpose. Nobody was forced into our template. "
@@ -231,12 +242,12 @@ def page_vendor_responses():
     if uploaded_existing:
         cols = st.columns([4, 1])
         with cols[0]:
-            st.caption(f"{len(uploaded_existing)} uploaded file(s) currently in the working set: "
-                       + ", ".join(uploaded_existing))
+            st.caption(f"{len(uploaded_existing)} uploaded file(s) currently in the working set - "
+                       "remove individual ones below, or clear them all here.")
         with cols[1]:
-            if st.button("Clear uploads"):
+            if st.button("Clear all uploads"):
                 for fname in uploaded_existing:
-                    os.remove(os.path.join(UPLOAD_DIR, fname))
+                    remove_uploaded_file(fname)
                 st.rerun()
 
     st.divider()
@@ -247,6 +258,10 @@ def page_vendor_responses():
     for fname, (path, is_uploaded) in sources.items():
         label = f"{fname}" + (" - uploaded" if is_uploaded else f" - {VENDOR_FILES.get(fname, '')}")
         with st.expander(label):
+            if is_uploaded:
+                if st.button("Remove this vendor response", key=f"remove_{fname}"):
+                    remove_uploaded_file(fname)
+                    st.rerun()
             ext = os.path.splitext(fname)[1].lower()
             render_vendor_preview(path, ext, fname)
 
@@ -292,6 +307,10 @@ def page_comparison():
 
     rfx = load_or_init_rfx()
     df, vendor_meta = build_comparison_table(EXTRACTION_DIR, rfx)
+    if df.empty:
+        st.warning("Extraction result(s) on disk don't have any usable line items yet - "
+                   "re-run extraction on the Vendor Responses tab.")
+        return
     st.session_state.comparison_df = df
     st.session_state.vendor_meta = vendor_meta
 
