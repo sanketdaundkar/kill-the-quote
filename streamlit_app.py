@@ -765,8 +765,10 @@ def page_comparison():
 
 def page_analyst():
     st.header("Ask the analyst")
-    st.caption("Natural language over the whole comparison. Try: \"cheapest per line, but only "
-               "among vendors who cleared the quality questionnaire\"")
+    st.caption(
+        "Compare vendors or ask for a recommendation - try \"cheapest per line among vendors "
+        "who cleared the questionnaire\" or \"who should get this award, and why.\""
+    )
 
     if "comparison_df" not in st.session_state:
         st.info("Build the comparison table on the Vendor summary and comparison tab first.")
