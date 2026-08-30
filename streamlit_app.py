@@ -24,6 +24,32 @@ from app.generation.rfx_docx import build_rfx_docx_bytes
 
 st.set_page_config(page_title="Aerchain - RFx Copilot", layout="wide")
 
+THEME_CSS = """
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Fraunces:wght@600;700&display=swap');
+
+h1, h2, h3 { font-family: 'Fraunces', Georgia, serif !important; font-weight: 700 !important;
+  color: #2B2620 !important; letter-spacing: -0.01em; }
+
+.stButton>button, .stDownloadButton>button {
+  background-color: #C1662F; color: #FFFFFF; border: none; border-radius: 8px; font-weight: 600;
+}
+.stButton>button:hover, .stDownloadButton>button:hover { background-color: #A9552A; color: #FFFFFF; }
+.stButton>button[kind="secondary"] { background-color: #FFFFFF; color: #2B2620; border: 1px solid #DED2B0; }
+
+[data-testid="stChatMessage"] { background-color: #FFFFFF; border-radius: 12px; border: 1px solid #E5DCC3; }
+[data-testid="stChatInput"] textarea { background-color: #FFFFFF !important; }
+
+[data-testid="stTabs"] button[aria-selected="true"] p { color: #C1662F !important; font-weight: 600; }
+[data-testid="stTabs"] [data-baseweb="tab-highlight"] { background-color: #C1662F !important; }
+
+.rfx-live-badge { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 11px;
+  font-weight: 600; letter-spacing: 0.03em; }
+.rfx-live-badge-on { background-color: #E4EEE1; color: #2f6f4f; }
+.rfx-live-badge-off { background-color: #F2ECE0; color: #8a8474; }
+</style>
+"""
+
 DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
 VENDOR_DIR = os.path.join(DATA_DIR, "vendor_responses")
 UPLOAD_DIR = os.path.join(DATA_DIR, "uploaded_vendor_responses")
@@ -125,7 +151,14 @@ def page_rfx_copilot():
 
     col1, col2 = st.columns([1, 1])
     with col1:
-        st.subheader("Co-pilot chat")
+        badge_cls = "rfx-live-badge-on" if has_api_key() else "rfx-live-badge-off"
+        badge_text = "Live model" if has_api_key() else "No API key"
+        st.markdown(
+            f'<div style="display:flex; justify-content:space-between; align-items:center;">'
+            f'<h3 style="margin:0;">Co-pilot chat</h3>'
+            f'<span class="rfx-live-badge {badge_cls}">{badge_text}</span></div>',
+            unsafe_allow_html=True,
+        )
         if "copilot_history" not in st.session_state:
             st.session_state.copilot_history = []
             st.session_state.copilot_draft = None
@@ -637,6 +670,7 @@ def page_analyst():
 
 
 def main():
+    st.markdown(THEME_CSS, unsafe_allow_html=True)
     st.title("RFx Copilot")
     render_api_key_sidebar()
     tabs = st.tabs(["1. Draft RFx", "2. Vendor Responses", "3. Comparison", "4. Ask the Analyst"])
