@@ -52,11 +52,18 @@ def all_vendor_sources():
 
 def render_api_key_sidebar():
     """Renders the sidebar API key widget exactly once per run - call this
-    only from main(). Everywhere else, use has_api_key() to just check."""
+    only from main(). Everywhere else, use has_api_key() to just check.
+
+    If a key is already available (e.g. via Streamlit Cloud secrets, which
+    are exposed as env vars automatically), this renders nothing at all -
+    no point showing an API key box to someone who isn't meant to touch it.
+    Only falls back to an input field for local dev without secrets set."""
     key = os.environ.get("ANTHROPIC_API_KEY", "")
+    if key:
+        return
     with st.sidebar:
         st.markdown("### Anthropic API key")
-        entered = st.text_input("ANTHROPIC_API_KEY", value=key, type="password",
+        entered = st.text_input("ANTHROPIC_API_KEY", value="", type="password",
                                  key="anthropic_api_key_input",
                                  help="Needed for extraction, RFx co-pilot, and the analyst chat.")
         if entered:
