@@ -42,6 +42,9 @@ h1 a, h2 a, h3 a { display: none !important; pointer-events: none; }
 .stButton>button:hover, .stDownloadButton>button:hover { background-color: #A9552A; color: #FFFFFF; }
 .stButton>button[kind="secondary"] { background-color: #FFFFFF; color: #2B2620; border: 1px solid #DED2B0; }
 
+[data-testid="stTabs"] button[aria-selected="true"] p { color: #C1662F !important; font-weight: 600; }
+[data-testid="stTabs"] [data-baseweb="tab-highlight"] { background-color: #C1662F !important; }
+
 [data-testid="stChatMessage"] { background-color: #FFFFFF; border-radius: 12px; border: 1px solid #E5DCC3; }
 [data-testid="stChatInput"] textarea { background-color: #FFFFFF !important; }
 
@@ -710,26 +713,17 @@ def page_analyst():
 
 def main():
     st.markdown(THEME_CSS, unsafe_allow_html=True)
-
-    with st.sidebar:
-        st.markdown("### Navigate")
-        page = st.radio(
-            "Navigate",
-            ["Draft RFx", "Vendor Responses", "Comparison", "Ask the Analyst"],
-            label_visibility="collapsed",
-        )
-        st.divider()
-
     render_api_key_sidebar()
     st.title("RFx Copilot")
 
-    if page == "Draft RFx":
+    tabs = st.tabs(["Draft RFx", "Vendor Responses", "Comparison", "Ask the Analyst"])
+    with tabs[0]:
         page_rfx_copilot()
-    elif page == "Vendor Responses":
+    with tabs[1]:
         page_vendor_responses()
-    elif page == "Comparison":
+    with tabs[2]:
         page_comparison()
-    else:
+    with tabs[3]:
         page_analyst()
 
 
