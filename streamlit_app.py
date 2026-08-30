@@ -470,7 +470,9 @@ def _questionnaire_badge(qa: dict) -> str:
     read. Deliberately simple and stated plainly rather than buried - this
     is exactly the kind of judgment call a buyer should be able to
     override: Fail if any answer contains a clear 'no', Partial if
-    anything's unanswered, Pass otherwise."""
+    anything's unanswered, Pass otherwise. The questionnaire itself IS the
+    RFx's own set of requirements (OEM authorization, delivery commitment,
+    etc.), so this is already an RFx-requirement check, not a generic one."""
     if not qa:
         return "No answers"
     answered = {k: v for k, v in qa.items() if v}
@@ -482,6 +484,43 @@ def _questionnaire_badge(qa: dict) -> str:
     if len(answered) < len(qa):
         return "Partial"
     return "Pass"
+
+
+def _parse_weeks(text: str):
+    """Pulls the largest number of weeks mentioned in a lead-time string.
+    Uses the largest (not first) number on purpose - 'RFx needs it done in
+    N weeks' should fail if ANY part of the order runs past that, so a
+    vendor's worst-case line (e.g. '7-8 weeks for laptops, 4 for the rest')
+    is what actually determines compliance, not their best-case line."""
+    if not text:
+        return None
+    nums = [int(n) for n in re.findall(r"\d+", text)]
+    return max(nums) if nums else None
+
+
+def _lead_time_status(vendor_text: str, rfx_window_text: str) -> str:
+    """Checks a vendor's stated lead time against the RFx's own required
+    delivery window - not just displaying the number, but saying whether
+    it's actually good enough."""
+    if not vendor_text:
+        return "❌ Not stated"
+    vendor_weeks = _parse_weeks(vendor_text)
+    rfx_weeks = _parse_weeks(rfx_window_text)
+    if vendor_weeks is None or rfx_weeks is None:
+        return vendor_text  # can't verify either side numerically - show raw, don't guess
+    if vendor_weeks <= rfx_weeks:
+        return f"✅ {vendor_text}"
+    return f"❌ {vendor_text} (RFx needs ≤{rfx_weeks}wk)"
+
+
+def _freight_status(freight_text: str) -> str:
+    """The RFx's own scope requires freight terms to be stated explicitly
+    (included or extra) - it doesn't mandate which one, just that the
+    vendor actually says. So compliance here is 'did they state it', not
+    'did they choose the cheaper option'."""
+    if not freight_text:
+        return "❌ Not stated"
+    return f"✅ {_freight_label(freight_text)}"
 
 
 def _freight_label(text: str) -> str:
@@ -517,10 +556,13 @@ def page_comparison():
     st.session_state.vendor_meta = vendor_meta
 
     st.subheader("Vendor summary")
-    st.caption("Who should you even be looking at, before you scroll into the line-item detail.")
+    st.caption("Who should you even be looking at, before you scroll into the line-item detail - "
+               "each check is evaluated against what this RFx actually requires, not just "
+               "displayed as whatever the vendor happened to say.")
 
     vendors = sorted(df["vendor_name"].unique())
     total_rfx_lines = len(rfx["line_items"])
+    rfx_delivery_window = (rfx.get("commercial_terms") or {}).get("delivery_window")
     summary = {}
     for vendor in vendors:
         vdf = df[df["vendor_name"] == vendor]
@@ -533,8 +575,8 @@ def page_comparison():
         summary[vendor] = {
             "RFx lines quoted": f"{vdf['item_code'].nunique()}/{total_rfx_lines}",
             "Quality pass": "✅" if badge == "Pass" else "❌",
-            "Lead time": terms.get("delivery_weeks") or "-",
-            "Freight": _freight_label(terms.get("freight_terms")),
+            "Lead time": _lead_time_status(terms.get("delivery_weeks"), rfx_delivery_window),
+            "Freight": _freight_status(terms.get("freight_terms")),
             "Quote validity": terms.get("quote_validity") or "-",
             "Avg. confidence": f"{conf.mean() * 100:.0f}%" if len(conf) else "-",
             "Review required": int((vdf["needs_buyer_review"] == True).sum()),
@@ -543,11 +585,15 @@ def page_comparison():
     summary_df = pd.DataFrame(summary)  # rows = metrics, columns = vendors (already in this shape)
     summary_df = summary_df[vendors]
     st.dataframe(summary_df, use_container_width=True)
-    st.caption("'Quality pass' is ✅ only if every questionnaire answer is in and none is a clear "
-               "'no' - partial or unanswered questionnaires show as ❌ too, so nothing incomplete "
-               "gets credit it hasn't earned. Override it yourself if you'd weigh it differently. "
-               "'Lead time' and 'Quote validity' show '-' when a vendor didn't state one - that's "
-               "a real gap in their response, not a missing feature here.")
+    st.caption(
+        f"'Quality pass' checks the RFx's own 5-question vendor questionnaire - ✅ only if every "
+        f"answer is in and none is a clear 'no'. 'Lead time' checks each vendor's stated delivery "
+        f"against this RFx's own requirement ({rfx_delivery_window or 'not specified'}) - ❌ means "
+        f"they said something slower, not that they said nothing. 'Freight' checks whether the "
+        f"vendor stated their terms at all, since the RFx's scope requires that explicitly - it "
+        f"doesn't judge which way they went. 'Quote validity' has no RFx-stated minimum to check "
+        f"against, so it's shown as reported, not scored."
+    )
 
     st.subheader("Coverage")
     st.caption("How much of the RFx each vendor actually quoted - a gap here is worth catching "
