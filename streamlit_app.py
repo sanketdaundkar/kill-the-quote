@@ -14,7 +14,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 from app.extraction.extract import extract_vendor_response
 from app.extraction.file_readers import read_docx, read_pdf
 from app.extraction.url_fetch import fetch_vendor_file_from_url, FetchError
-from app.comparison.normalize import build_comparison_table, coverage_summary, load_rfx_spec
+from app.comparison.normalize import build_comparison_table, load_rfx_spec
 from app.chat.analyst import ask_analyst
 from app.generation.rfx_copilot import copilot_turn
 from app.generation.rfx_docx import build_rfx_docx_bytes
@@ -595,11 +595,6 @@ def page_comparison():
         f"against, so it's shown as reported, not scored."
     )
 
-    st.subheader("Coverage")
-    st.caption("How much of the RFx each vendor actually quoted - a gap here is worth catching "
-               "now, not on day nine when the VP asks why a vendor's total looks light.")
-    st.dataframe(coverage_summary(df, rfx), use_container_width=True)
-
     st.subheader("Full line-item comparison")
     show_flagged_only = st.checkbox("Show only lines flagged for buyer review")
     view = df[df["needs_buyer_review"] == True] if show_flagged_only else df
@@ -628,42 +623,53 @@ def page_comparison():
                        "check the Ask the Analyst tab before treating this as final.")
 
     st.subheader("Vendor questionnaire, terms, and source documents")
-    st.caption("Each vendor's answers and the original file they sent, right next to the numbers "
-               "above - so you don't have to jump tabs to sanity-check where a figure came from.")
+    st.caption("Every vendor's answers and terms, side by side, so you're comparing them the "
+               "same way you compare price.")
     sources = all_vendor_sources()
     rfx_questionnaire = {q["q_id"]: q["question"] for q in rfx.get("questionnaire", [])}
+    term_labels = {
+        "payment_terms": "Payment terms",
+        "delivery_location": "Delivery location",
+        "delivery_window": "Delivery window",
+        "warranty_minimum": "Minimum warranty",
+        "freight_terms": "Freight terms",
+        "quote_validity": "Quote validity",
+    }
 
+    qa_terms_table = {}
     for vendor, meta in vendor_meta.items():
-        with st.expander(vendor):
-            qa = meta.get("questionnaire_answers") or {}
-            if any(qa.values()):
-                qa_rows = [
-                    {"Question": rfx_questionnaire.get(qid, qid), "Answer": ans or "(not addressed)"}
-                    for qid, ans in qa.items()
-                ]
-                st.table(pd.DataFrame(qa_rows))
-            else:
-                st.caption("No questionnaire answers extracted for this vendor.")
+        qa = meta.get("questionnaire_answers") or {}
+        terms = meta.get("commercial_terms") or {}
+        col = {}
+        for qid, qtext in rfx_questionnaire.items():
+            col[qtext] = qa.get(qid) or "(not addressed)"
+        for key, label in term_labels.items():
+            col[label] = terms.get(key) or "-"
+        col["Source file"] = meta.get("source_file") or "-"
+        qa_terms_table[vendor] = col
 
-            terms = meta.get("commercial_terms") or {}
-            if any(terms.values()):
-                st.markdown("**Commercial terms**")
-                for k, v in terms.items():
-                    if v:
-                        st.write(f"- {k.replace('_', ' ').title()}: {v}")
+    if qa_terms_table:
+        st.dataframe(pd.DataFrame(qa_terms_table), use_container_width=True)
 
-            if meta.get("extraction_warnings"):
-                st.markdown("**Extraction warnings**")
-                for w in meta["extraction_warnings"]:
-                    st.caption(f"⚠️ {w}")
+    warnings_present = {v: m.get("extraction_warnings") for v, m in vendor_meta.items() if m.get("extraction_warnings")}
+    if warnings_present:
+        st.markdown("**Extraction warnings**")
+        for vendor, warnings in warnings_present.items():
+            for w in warnings:
+                st.caption(f"⚠️ **{vendor}**: {w}")
 
-            src_fname = meta.get("source_file")
-            if src_fname and src_fname in sources:
-                st.markdown("**Original document**")
+    st.markdown("**Source documents**")
+    st.caption("The actual file each vendor sent, not just what extraction pulled from it.")
+    for vendor, meta in vendor_meta.items():
+        src_fname = meta.get("source_file")
+        if not src_fname:
+            continue
+        with st.expander(f"{vendor} - {src_fname}"):
+            if src_fname in sources:
                 src_path, _ = sources[src_fname]
                 ext = os.path.splitext(src_fname)[1].lower()
                 render_vendor_preview(src_path, ext, src_fname, key_prefix="comparison")
-            elif src_fname:
+            else:
                 st.caption(f"Original file ({src_fname}) is no longer in the working set - "
                            "it may have been removed or replaced since this extraction ran.")
 
