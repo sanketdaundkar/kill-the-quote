@@ -266,28 +266,58 @@ def page_vendor_responses():
             render_vendor_preview(path, ext, fname)
 
     st.divider()
-    if st.button(f"Run extraction on all {len(sources)} vendor response(s)", type="primary"):
+    already_extracted = {
+        fname for fname in sources
+        if os.path.exists(os.path.join(EXTRACTION_DIR, os.path.splitext(fname)[0] + ".json"))
+    }
+    pending = [fname for fname in sources if fname not in already_extracted]
+
+    col1, col2 = st.columns([2, 1])
+    with col1:
+        if pending:
+            label = f"Run extraction on {len(pending)} pending vendor response(s)"
+        else:
+            label = f"Re-run extraction on all {len(sources)} vendor response(s)"
+        run_clicked = st.button(label, type="primary")
+    with col2:
+        force_all = st.checkbox("Force re-run all", value=not pending,
+                                 help="Off by default once some vendors have already succeeded, "
+                                      "so a retry after a partial failure doesn't re-spend API calls "
+                                      "on vendors that already extracted cleanly.")
+
+    if run_clicked:
         if not has_api_key():
             st.error("Add your ANTHROPIC_API_KEY in the sidebar first.")
         else:
             rfx = load_or_init_rfx()
-            progress = st.progress(0.0, text="Starting extraction...")
-            errors = []
-            for i, (fname, (path, _)) in enumerate(sources.items()):
-                progress.progress(i / len(sources), text=f"Extracting {fname}...")
-                try:
-                    result = extract_vendor_response(path, rfx)
-                    out_path = os.path.join(EXTRACTION_DIR, os.path.splitext(fname)[0] + ".json")
-                    with open(out_path, "w") as f:
-                        json.dump(result, f, indent=2)
-                except Exception as e:
-                    errors.append((fname, str(e), traceback.format_exc()))
-            progress.progress(1.0, text="Done.")
-            if errors:
-                for fname, err, tb in errors:
-                    st.error(f"{fname}: {err}")
+            to_run = list(sources.items()) if force_all else [
+                (fname, val) for fname, val in sources.items() if fname not in already_extracted
+            ]
+            if not to_run:
+                st.info("Nothing to extract - every vendor already has a cached result. "
+                        "Check 'Force re-run all' to redo them anyway.")
             else:
-                st.success(f"Extraction complete for all {len(sources)} vendor(s). See the Comparison tab.")
+                progress = st.progress(0.0, text="Starting extraction...")
+                errors = []
+                for i, (fname, (path, _)) in enumerate(to_run):
+                    progress.progress(i / len(to_run), text=f"Extracting {fname}...")
+                    try:
+                        result = extract_vendor_response(path, rfx)
+                        out_path = os.path.join(EXTRACTION_DIR, os.path.splitext(fname)[0] + ".json")
+                        with open(out_path, "w") as f:
+                            json.dump(result, f, indent=2)
+                    except Exception as e:
+                        errors.append((fname, str(e), traceback.format_exc()))
+                progress.progress(1.0, text="Done.")
+                if errors:
+                    for fname, err, tb in errors:
+                        st.error(f"{fname}: {err}")
+                    ok_count = len(to_run) - len(errors)
+                    if ok_count:
+                        st.success(f"{ok_count} of {len(to_run)} succeeded. Re-click above to retry "
+                                   "just the failed one(s) - already-succeeded vendors won't be re-run.")
+                else:
+                    st.success(f"Extraction complete for all {len(to_run)} vendor(s). See the Comparison tab.")
 
     existing = [f for f in os.listdir(EXTRACTION_DIR) if f.endswith(".json")] if os.path.exists(EXTRACTION_DIR) else []
     if existing:

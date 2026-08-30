@@ -117,7 +117,12 @@ def build_user_content(rfx_spec: dict, kind: str, payload):
         return [{"type": "text", "text": header + "\n\n--- VENDOR RESPONSE (raw text dump) ---\n" + payload}]
     elif kind == "image":
         return [
-            {"type": "text", "text": header + "\n\nVendor response is the attached image (a photographed rate card - it may be angled/skewed, read it carefully)."},
+            {"type": "text", "text": header + "\n\nVendor response is the attached image (a photographed "
+             "rate card - it may be angled/skewed, read it carefully). If the image quality affects "
+             "several rows in a similar way (e.g. general skew making text harder to read), say that ONCE "
+             "in extraction_warnings rather than repeating a similar note on every affected line - keep "
+             "individual line notes/review_reason empty or brief unless that specific line has something "
+             "line-specific to flag."},
             {"type": "image", "source": {"type": "base64", "media_type": payload["media_type"], "data": payload["data"]}},
         ]
     raise ValueError(kind)
@@ -129,7 +134,7 @@ def extract_vendor_response(file_path: str, rfx_spec: dict) -> dict:
     content = build_user_content(rfx_spec, kind, payload)
     resp = client.messages.create(
         model=MODEL,
-        max_tokens=8000,
+        max_tokens=16000,
         system=EXTRACTION_SYSTEM_PROMPT,
         messages=[{"role": "user", "content": content}],
     )
