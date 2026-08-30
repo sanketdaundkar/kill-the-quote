@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -35,6 +36,20 @@ VENDOR_FILES = {
 }
 
 ALLOWED_UPLOAD_TYPES = ["xlsx", "pdf", "docx", "jpg", "jpeg", "png", "txt", "eml"]
+
+
+def _explain_payment_terms(value: str) -> str:
+    """Turns a payment-terms string into a plain-language one-liner. Handles
+    the common 'Net X' pattern explicitly; falls back to a generic hint for
+    anything else (advance/split terms, discount-for-early-payment terms,
+    etc.) rather than trying to parse every possible phrasing."""
+    match = re.search(r"net[\s-]*(\d+)", value, re.IGNORECASE)
+    if match:
+        days = match.group(1)
+        return f"vendor's invoice is due {days} days after {'delivery' if 'delivery' in value.lower() else 'the invoice date'}"
+    if "advance" in value.lower():
+        return "part of the payment is due upfront, before delivery"
+    return "when and how the vendor gets paid"
 
 
 def list_uploaded_files():
@@ -141,16 +156,20 @@ def page_rfx_copilot():
 
         terms = draft_to_show.get("commercial_terms") or rfx.get("commercial_terms") or {}
         if any(terms.values()):
-            st.markdown("**Commercial terms**")
-            term_labels = {
-                "payment_terms": "Payment terms",
-                "delivery_location": "Delivery location",
-                "delivery_window": "Delivery window",
-                "warranty_minimum": "Minimum warranty",
-            }
-            for key, label in term_labels.items():
+            st.markdown("**Commercial terms** _(the business conditions vendors must accept, "
+                        "separate from pricing)_")
+            for key, label, hint in [
+                ("payment_terms", "Payment terms",
+                 lambda v: _explain_payment_terms(v)),
+                ("delivery_location", "Delivery location",
+                 lambda v: "where the order gets shipped"),
+                ("delivery_window", "Delivery window",
+                 lambda v: "how soon after the PO vendors must deliver"),
+                ("warranty_minimum", "Minimum warranty",
+                 lambda v: "the least coverage a vendor's quote must include"),
+            ]:
                 if terms.get(key):
-                    st.write(f"- **{label}:** {terms[key]}")
+                    st.write(f"- **{label}: {terms[key]}** — _{hint(terms[key])}_")
 
         questionnaire = draft_to_show.get("questionnaire") or rfx.get("questionnaire") or []
         if questionnaire:
