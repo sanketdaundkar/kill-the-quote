@@ -59,11 +59,27 @@ def list_uploaded_files():
 
 
 def all_vendor_sources():
-    """Returns {filename: (full_path, is_uploaded)} for demo fixtures + anything uploaded."""
-    sources = {fname: (os.path.join(VENDOR_DIR, fname), False) for fname in VENDOR_FILES}
+    """Returns {filename: (full_path, is_uploaded)} for demo fixtures + anything uploaded.
+    Demo fixtures the user has hidden this session are excluded."""
+    hidden = st.session_state.get("hidden_demo_files", set())
+    sources = {
+        fname: (os.path.join(VENDOR_DIR, fname), False)
+        for fname in VENDOR_FILES if fname not in hidden
+    }
     for fname in list_uploaded_files():
         sources[fname] = (os.path.join(UPLOAD_DIR, fname), True)
     return sources
+
+
+def hide_demo_file(fname: str):
+    """Removes a bundled demo vendor from the working set for this session
+    (not deleted from disk - it's a shared fixture, not the user's file) and
+    clears any cached extraction for it so it doesn't linger in comparisons."""
+    hidden = st.session_state.setdefault("hidden_demo_files", set())
+    hidden.add(fname)
+    extraction_path = os.path.join(EXTRACTION_DIR, os.path.splitext(fname)[0] + ".json")
+    if os.path.exists(extraction_path):
+        os.remove(extraction_path)
 
 
 def render_api_key_sidebar():
@@ -352,6 +368,17 @@ def page_vendor_responses():
     st.subheader("Working set")
     st.caption("Preview shows the raw content exactly as extraction will read it - "
                "check it yourself before trusting the comparison.")
+
+    hidden_demo = st.session_state.get("hidden_demo_files", set())
+    if hidden_demo:
+        cols = st.columns([4, 1])
+        with cols[0]:
+            st.caption(f"{len(hidden_demo)} demo vendor(s) removed from the working set this session.")
+        with cols[1]:
+            if st.button("Restore demo vendors"):
+                st.session_state.hidden_demo_files = set()
+                st.rerun()
+
     sources = all_vendor_sources()
     for fname, (path, is_uploaded) in sources.items():
         label = f"{fname}" + (" - uploaded" if is_uploaded else f" - {VENDOR_FILES.get(fname, '')}")
@@ -359,6 +386,12 @@ def page_vendor_responses():
             if is_uploaded:
                 if st.button("Remove this vendor response", key=f"remove_{fname}"):
                     remove_uploaded_file(fname)
+                    st.rerun()
+            else:
+                if st.button("Remove from working set", key=f"hide_{fname}",
+                              help="Removes this demo vendor for this session. It isn't deleted "
+                                   "from disk - you can bring it back with 'Restore demo vendors' above."):
+                    hide_demo_file(fname)
                     st.rerun()
             ext = os.path.splitext(fname)[1].lower()
             render_vendor_preview(path, ext, fname)
