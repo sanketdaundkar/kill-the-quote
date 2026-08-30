@@ -651,13 +651,6 @@ def page_comparison():
     if qa_terms_table:
         st.dataframe(pd.DataFrame(qa_terms_table), use_container_width=True)
 
-    warnings_present = {v: m.get("extraction_warnings") for v, m in vendor_meta.items() if m.get("extraction_warnings")}
-    if warnings_present:
-        st.markdown("**Extraction warnings**")
-        for vendor, warnings in warnings_present.items():
-            for w in warnings:
-                st.caption(f"⚠️ **{vendor}**: {w}")
-
     st.markdown("**Source documents**")
     st.caption("The actual file each vendor sent, not just what extraction pulled from it.")
     for vendor, meta in vendor_meta.items():
