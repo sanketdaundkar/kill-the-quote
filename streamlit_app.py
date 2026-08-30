@@ -15,6 +15,9 @@ from app.extraction.extract import extract_vendor_response
 from app.extraction.file_readers import read_docx, read_pdf
 from app.extraction.url_fetch import fetch_vendor_file_from_url, FetchError
 from app.comparison.normalize import build_comparison_table, load_rfx_spec
+from app.comparison.styled_view import (
+    build_vendor_cards, build_line_grid, render_cards_html, render_grid_html, lead_time_display,
+)
 from app.chat.analyst import ask_analyst
 from app.generation.rfx_copilot import copilot_turn
 from app.generation.rfx_docx import build_rfx_docx_bytes
@@ -465,78 +468,6 @@ def page_vendor_responses():
                 st.json(json.load(f))
 
 
-def _questionnaire_badge(qa: dict) -> str:
-    """Turns a vendor's questionnaire answers into a simple Pass/Partial/Fail
-    read. Deliberately simple and stated plainly rather than buried - this
-    is exactly the kind of judgment call a buyer should be able to
-    override: Fail if any answer contains a clear 'no', Partial if
-    anything's unanswered, Pass otherwise. The questionnaire itself IS the
-    RFx's own set of requirements (OEM authorization, delivery commitment,
-    etc.), so this is already an RFx-requirement check, not a generic one."""
-    if not qa:
-        return "No answers"
-    answered = {k: v for k, v in qa.items() if v}
-    if not answered:
-        return "No answers"
-    has_no = any(re.search(r"(?<![a-z])no(?![a-z])", str(v).lower()) for v in answered.values())
-    if has_no:
-        return "Fail"
-    if len(answered) < len(qa):
-        return "Partial"
-    return "Pass"
-
-
-def _parse_weeks(text: str):
-    """Pulls the largest number of weeks mentioned in a lead-time string.
-    Uses the largest (not first) number on purpose - 'RFx needs it done in
-    N weeks' should fail if ANY part of the order runs past that, so a
-    vendor's worst-case line (e.g. '7-8 weeks for laptops, 4 for the rest')
-    is what actually determines compliance, not their best-case line."""
-    if not text:
-        return None
-    nums = [int(n) for n in re.findall(r"\d+", text)]
-    return max(nums) if nums else None
-
-
-def _lead_time_status(vendor_text: str, rfx_window_text: str) -> str:
-    """Checks a vendor's stated lead time against the RFx's own required
-    delivery window - not just displaying the number, but saying whether
-    it's actually good enough."""
-    if not vendor_text:
-        return "❌ Not stated"
-    vendor_weeks = _parse_weeks(vendor_text)
-    rfx_weeks = _parse_weeks(rfx_window_text)
-    if vendor_weeks is None or rfx_weeks is None:
-        return vendor_text  # can't verify either side numerically - show raw, don't guess
-    if vendor_weeks <= rfx_weeks:
-        return f"✅ {vendor_text}"
-    return f"❌ {vendor_text} (RFx needs ≤{rfx_weeks}wk)"
-
-
-def _freight_status(freight_text: str) -> str:
-    """The RFx's own scope requires freight terms to be stated explicitly
-    (included or extra) - it doesn't mandate which one, just that the
-    vendor actually says. So compliance here is 'did they state it', not
-    'did they choose the cheaper option'."""
-    if not freight_text:
-        return "❌ Not stated"
-    return f"✅ {_freight_label(freight_text)}"
-
-
-def _freight_label(text: str) -> str:
-    """Classifies freight terms into Included/Extra for the compact summary
-    row. Falls back to the vendor's own words (truncated) when the phrasing
-    doesn't clearly say either way, rather than forcing a guess."""
-    if not text:
-        return "-"
-    t = text.lower()
-    if "includ" in t:
-        return "Included"
-    if "extra" in t or "exclud" in t or "excl" in t:
-        return "Extra"
-    return text if len(text) <= 18 else text[:15] + "..."
-
-
 def page_comparison():
     st.header("3. Side-by-side comparison")
     st.caption("Every vendor's response normalized to the same lines, same units, same "
@@ -556,54 +487,45 @@ def page_comparison():
     st.session_state.vendor_meta = vendor_meta
 
     st.subheader("Vendor summary")
-    st.caption("Who should you even be looking at, before you scroll into the line-item detail - "
-               "each check is evaluated against what this RFx actually requires, not just "
-               "displayed as whatever the vendor happened to say.")
+    st.caption("Totals are compared on the lines every included vendor actually priced - not "
+               "each vendor's own best-case subset - so 'cheapest overall' means something.")
 
     vendors = sorted(df["vendor_name"].unique())
-    total_rfx_lines = len(rfx["line_items"])
-    rfx_delivery_window = (rfx.get("commercial_terms") or {}).get("delivery_window")
-    summary = {}
+    excluded = set(st.multiselect(
+        "Exclude a vendor from consideration",
+        vendors, default=[],
+        help="Doesn't hide their quotes - lines they already priced still show and still count "
+             "for 'lowest'. It just labels the lines they DIDN'T quote as deprioritized by your "
+             "call, instead of a plain 'not quoted' gap.",
+    ))
+    included_vendors = [v for v in vendors if v not in excluded]
+
+    cards = build_vendor_cards(df, vendor_meta, rfx, included_vendors)
+    st.markdown(render_cards_html(cards), unsafe_allow_html=True)
+
+    st.subheader("Line-item comparison")
+    grid_rows = build_line_grid(df, rfx, vendors, excluded)
+    vendor_headers = {}
     for vendor in vendors:
-        vdf = df[df["vendor_name"] == vendor]
-        meta = vendor_meta.get(vendor) or {}
-        terms = meta.get("commercial_terms") or {}
-        qa = meta.get("questionnaire_answers") or {}
-        badge = _questionnaire_badge(qa)
-        conf = vdf["match_confidence"].dropna()
+        terms = (vendor_meta.get(vendor) or {}).get("commercial_terms") or {}
+        currency = "INR"
+        native_currencies = df[(df["vendor_name"] == vendor) & df["currency_native"].notna()]["currency_native"]
+        if not native_currencies.empty and (native_currencies != "INR").any():
+            currency = native_currencies.mode().iloc[0]
+        vendor_headers[vendor] = f"{vendor}<br><span style='font-weight:400'>{currency} &middot; {lead_time_display(terms.get('delivery_weeks'))}</span>"
+    st.markdown(render_grid_html(grid_rows, vendors, vendor_headers), unsafe_allow_html=True)
 
-        summary[vendor] = {
-            "RFx lines quoted": f"{vdf['item_code'].nunique()}/{total_rfx_lines}",
-            "Quality pass": "✅" if badge == "Pass" else "❌",
-            "Lead time": _lead_time_status(terms.get("delivery_weeks"), rfx_delivery_window),
-            "Freight": _freight_status(terms.get("freight_terms")),
-            "Quote validity": terms.get("quote_validity") or "-",
-            "Avg. confidence": f"{conf.mean() * 100:.0f}%" if len(conf) else "-",
-            "Review required": int((vdf["needs_buyer_review"] == True).sum()),
-        }
-
-    summary_df = pd.DataFrame(summary)  # rows = metrics, columns = vendors (already in this shape)
-    summary_df = summary_df[vendors]
-    st.dataframe(summary_df, use_container_width=True)
-    st.caption(
-        f"'Quality pass' checks the RFx's own 5-question vendor questionnaire - ✅ only if every "
-        f"answer is in and none is a clear 'no'. 'Lead time' checks each vendor's stated delivery "
-        f"against this RFx's own requirement ({rfx_delivery_window or 'not specified'}) - ❌ means "
-        f"they said something slower, not that they said nothing. 'Freight' checks whether the "
-        f"vendor stated their terms at all, since the RFx's scope requires that explicitly - it "
-        f"doesn't judge which way they went. 'Quote validity' has no RFx-stated minimum to check "
-        f"against, so it's shown as reported, not scored."
-    )
-
-    st.subheader("Full line-item comparison")
-    show_flagged_only = st.checkbox("Show only lines flagged for buyer review")
-    view = df[df["needs_buyer_review"] == True] if show_flagged_only else df
-    st.dataframe(
-        view[["vendor_name", "item_code", "rfx_description", "qty_quoted", "unit_price_inr",
-              "unit_basis", "carried_forward", "needs_buyer_review", "review_reason"]]
-        .sort_values(["item_code", "vendor_name"]),
-        use_container_width=True, height=500,
-    )
+    with st.expander("Flagged lines - detail view (review reasons, carried-forward tags)"):
+        flagged = df[df["needs_buyer_review"] == True]
+        if flagged.empty:
+            st.caption("Nothing flagged.")
+        else:
+            st.dataframe(
+                flagged[["vendor_name", "item_code", "rfx_description", "qty_quoted", "unit_price_inr",
+                         "unit_basis", "carried_forward", "review_reason"]]
+                .sort_values(["item_code", "vendor_name"]),
+                use_container_width=True, height=350,
+            )
 
     st.subheader("Cheapest eligible vendor per line")
     priced = df[df["unit_price_inr"].notna()]
