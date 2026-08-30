@@ -15,6 +15,7 @@ from app.extraction.file_readers import read_docx, read_pdf
 from app.comparison.normalize import build_comparison_table, coverage_summary, load_rfx_spec
 from app.chat.analyst import ask_analyst
 from app.generation.rfx_copilot import copilot_turn
+from app.generation.rfx_docx import build_rfx_docx_bytes
 
 st.set_page_config(page_title="Aerchain - Kill the Quote Spreadsheet", layout="wide")
 
@@ -135,6 +136,19 @@ def page_rfx_copilot():
             st.session_state.rfx_spec = load_rfx_spec()
             st.session_state.copilot_draft = None
             st.success("Loaded the demo RFx: IT Hardware Refresh, 30 lines, 5 vendors invited.")
+
+        st.divider()
+        try:
+            docx_bytes = build_rfx_docx_bytes(draft_to_show)
+            docx_title = (draft_to_show.get("title") or "RFx").replace(" ", "_")
+            st.download_button(
+                "Download RFx as Word doc (.docx)",
+                data=docx_bytes,
+                file_name=f"{docx_title}.docx",
+                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            )
+        except Exception as e:
+            st.warning(f"Couldn't build the Word doc yet: {e}")
 
 
 MIME_TYPES = {
