@@ -55,6 +55,9 @@ h1 a, h2 a, h3 a { display: none !important; pointer-events: none; }
 .rfx-format-badge { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 11px;
   font-weight: 600; letter-spacing: 0.03em; background-color: #F2ECE0; color: #8a6b4a;
   border: 1px solid #DED2B0; margin-right: 6px; }
+.rfx-flag-badge { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 11px;
+  font-weight: 600; letter-spacing: 0.03em; background-color: #F7E4D8; color: #a1512f;
+  margin-left: 6px; }
 </style>
 """
 
@@ -119,6 +122,21 @@ def vendor_display_label(fname: str, is_uploaded: bool, already_extracted: set) 
         desc = VENDOR_FILES.get(fname, "")
         return desc.split(" - ")[0] if " - " in desc else (desc or fname)
     return fname
+
+
+def flagged_count_for_file(fname: str) -> int:
+    """Counts how many of a single vendor's extracted line items are
+    flagged for buyer review - reads their extraction JSON directly, so
+    this works even before the full comparison table has been built."""
+    extraction_path = os.path.join(EXTRACTION_DIR, os.path.splitext(fname)[0] + ".json")
+    if not os.path.exists(extraction_path):
+        return 0
+    try:
+        with open(extraction_path) as f:
+            data = json.load(f)
+        return sum(1 for li in data.get("line_items", []) if li.get("needs_buyer_review"))
+    except (OSError, json.JSONDecodeError):
+        return 0
 
 
 def all_vendor_sources():
@@ -467,11 +485,15 @@ def page_vendor_responses():
             format_label = FORMAT_LABELS.get(ext, ext.lstrip(".").upper() or "FILE")
             status_cls = "rfx-live-badge-on" if fname in already_extracted else "rfx-live-badge-off"
             status_text = "Extracted" if fname in already_extracted else "Not yet extracted"
-            st.markdown(
+            badges_html = (
                 f'<span class="rfx-format-badge">{format_label}</span>'
-                f'<span class="rfx-live-badge {status_cls}">{status_text}</span>',
-                unsafe_allow_html=True,
+                f'<span class="rfx-live-badge {status_cls}">{status_text}</span>'
             )
+            if fname in already_extracted:
+                flagged = flagged_count_for_file(fname)
+                if flagged:
+                    badges_html += f'<span class="rfx-flag-badge">{flagged} flagged for review</span>'
+            st.markdown(badges_html, unsafe_allow_html=True)
             if is_uploaded:
                 if st.button("Remove this vendor response", key=f"remove_{fname}"):
                     remove_uploaded_file(fname)
@@ -541,6 +563,59 @@ def page_vendor_responses():
         if pick != "(none)":
             with open(os.path.join(EXTRACTION_DIR, pick)) as f:
                 st.json(json.load(f))
+
+
+def page_review():
+    st.header("Review")
+    st.caption("Every extracted line that needs a second look, grouped by vendor - so nothing "
+               "flagged gets missed before you trust a number enough to act on it.")
+
+    existing = [f for f in os.listdir(EXTRACTION_DIR) if f.endswith(".json")] if os.path.exists(EXTRACTION_DIR) else []
+    if not existing:
+        st.info("Run extraction on the Vendor Responses tab first.")
+        return
+
+    rfx = load_or_init_rfx()
+    df, vendor_meta = build_comparison_table(EXTRACTION_DIR, rfx)
+    if df.empty:
+        st.warning("Extraction result(s) on disk don't have any usable line items yet - "
+                   "re-run extraction on the Vendor Responses tab.")
+        return
+
+    flagged_all = df[df["needs_buyer_review"] == True]
+    total_flagged = len(flagged_all)
+    if total_flagged == 0:
+        st.success("Nothing flagged for review across any extracted vendor.")
+        return
+
+    st.metric("Total open items across all vendors", total_flagged)
+    st.divider()
+
+    for vendor in sorted(df["vendor_name"].unique()):
+        vdf = df[df["vendor_name"] == vendor]
+        flagged = vdf[vdf["needs_buyer_review"] == True]
+        meta = vendor_meta.get(vendor) or {}
+        lines_extracted = vdf["item_code"].nunique()
+        conf = vdf["match_confidence"].dropna()
+        mean_conf = f"{conf.mean() * 100:.0f}%" if len(conf) else "n/a"
+
+        with st.container():
+            st.markdown(
+                f'<div class="rfx-card" style="margin-bottom:12px;">'
+                f'<div class="rfx-card-name">{vendor}</div>'
+                f'<div class="rfx-card-meta">{lines_extracted}/{len(rfx["line_items"])} lines extracted '
+                f'&middot; Mean confidence: {mean_conf} &middot; Flagged for review: {len(flagged)}</div>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+            if not flagged.empty:
+                with st.expander(f"Review {len(flagged)} open item(s) for {vendor}"):
+                    st.dataframe(
+                        flagged[["item_code", "rfx_description", "unit_price_inr", "unit_basis",
+                                 "carried_forward", "review_reason"]]
+                        .sort_values("item_code"),
+                        use_container_width=True,
+                    )
 
 
 def page_comparison():
@@ -696,14 +771,16 @@ def main():
     render_api_key_sidebar()
     st.title("RFx Copilot")
 
-    tabs = st.tabs(["Draft RFx", "Vendor Responses", "Vendor summary and comparison", "Ask the Analyst"])
+    tabs = st.tabs(["Draft RFx", "Vendor Responses", "Review", "Vendor summary and comparison", "Ask the Analyst"])
     with tabs[0]:
         page_rfx_copilot()
     with tabs[1]:
         page_vendor_responses()
     with tabs[2]:
-        page_comparison()
+        page_review()
     with tabs[3]:
+        page_comparison()
+    with tabs[4]:
         page_analyst()
 
 
