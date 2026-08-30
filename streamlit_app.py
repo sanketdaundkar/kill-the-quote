@@ -31,6 +31,11 @@ THEME_CSS = """
 h1, h2, h3 { font-family: 'Fraunces', Georgia, serif !important; font-weight: 700 !important;
   color: #2B2620 !important; letter-spacing: -0.01em; }
 
+/* Hide the hover "copy link to this heading" icon Streamlit adds to every header */
+[data-testid="stHeaderActionElements"] { display: none !important; }
+[data-testid="stHeadingWithActionElements"] a { display: none !important; }
+h1 a, h2 a, h3 a { display: none !important; pointer-events: none; }
+
 .stButton>button, .stDownloadButton>button {
   background-color: #C1662F; color: #FFFFFF; border: none; border-radius: 8px; font-weight: 600;
 }
@@ -39,9 +44,6 @@ h1, h2, h3 { font-family: 'Fraunces', Georgia, serif !important; font-weight: 70
 
 [data-testid="stChatMessage"] { background-color: #FFFFFF; border-radius: 12px; border: 1px solid #E5DCC3; }
 [data-testid="stChatInput"] textarea { background-color: #FFFFFF !important; }
-
-[data-testid="stTabs"] button[aria-selected="true"] p { color: #C1662F !important; font-weight: 600; }
-[data-testid="stTabs"] [data-baseweb="tab-highlight"] { background-color: #C1662F !important; }
 
 .rfx-live-badge { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 11px;
   font-weight: 600; letter-spacing: 0.03em; }
@@ -94,6 +96,26 @@ FORMAT_LABELS = {
     ".xlsx": "EXCEL", ".xls": "EXCEL", ".pdf": "PDF", ".docx": "WORD", ".doc": "WORD",
     ".jpg": "IMAGE", ".jpeg": "IMAGE", ".png": "IMAGE", ".txt": "TEXT", ".eml": "EMAIL",
 }
+
+
+def vendor_display_label(fname: str, is_uploaded: bool, already_extracted: set) -> str:
+    """Just the vendor's name for the Working Set list - no filename, no
+    format/description clutter. Prefers the vendor's own stated name from a
+    completed extraction (the real, current source of truth); falls back to
+    the demo fixture's known name, or the filename itself for an upload
+    that hasn't been extracted yet and whose vendor name we don't know."""
+    if fname in already_extracted:
+        try:
+            with open(os.path.join(EXTRACTION_DIR, os.path.splitext(fname)[0] + ".json")) as f:
+                extracted_name = json.load(f).get("vendor_name")
+            if extracted_name:
+                return extracted_name
+        except (OSError, json.JSONDecodeError):
+            pass
+    if not is_uploaded:
+        desc = VENDOR_FILES.get(fname, "")
+        return desc.split(" - ")[0] if " - " in desc else (desc or fname)
+    return fname
 
 
 def all_vendor_sources():
@@ -152,7 +174,7 @@ def load_or_init_rfx():
 
 
 def page_rfx_copilot():
-    st.header("1. Draft the RFx")
+    st.header("Draft the RFx")
     st.caption("Chat with the assistant on the left to build your own request for quote, or "
                "click the button on the right to load a ready-made example and skip ahead.")
 
@@ -357,7 +379,7 @@ def remove_uploaded_file(fname: str):
 
 
 def page_vendor_responses():
-    st.header("2. Vendor responses")
+    st.header("Vendor responses")
     st.caption("Vendors reply however they like - no shared template required. Upload real "
                "vendor files below (or paste a link) to add them to, or replace, the demo set.")
 
@@ -436,7 +458,7 @@ def page_vendor_responses():
         if os.path.exists(os.path.join(EXTRACTION_DIR, os.path.splitext(fname)[0] + ".json"))
     }
     for fname, (path, is_uploaded) in sources.items():
-        label = f"{fname}" + (" - uploaded" if is_uploaded else f" - {VENDOR_FILES.get(fname, '')}")
+        label = vendor_display_label(fname, is_uploaded, already_extracted)
         with st.expander(label):
             ext = os.path.splitext(fname)[1].lower()
             format_label = FORMAT_LABELS.get(ext, ext.lstrip(".").upper() or "FILE")
@@ -519,7 +541,7 @@ def page_vendor_responses():
 
 
 def page_comparison():
-    st.header("3. Side-by-side comparison")
+    st.header("Side-by-side comparison")
     st.caption("Every vendor's response normalized to the same lines, same units, same "
                "currency - so 'cheapest' means something you can actually act on.")
     existing = [f for f in os.listdir(EXTRACTION_DIR) if f.endswith(".json")] if os.path.exists(EXTRACTION_DIR) else []
@@ -624,7 +646,7 @@ def page_comparison():
 
 
 def page_analyst():
-    st.header("4. Ask the analyst")
+    st.header("Ask the analyst")
     st.caption("Natural language over the whole comparison. Try: \"cheapest per line, but only "
                "among vendors who cleared the quality questionnaire\"")
 
@@ -688,16 +710,26 @@ def page_analyst():
 
 def main():
     st.markdown(THEME_CSS, unsafe_allow_html=True)
-    st.title("RFx Copilot")
+
+    with st.sidebar:
+        st.markdown("### Navigate")
+        page = st.radio(
+            "Navigate",
+            ["Draft RFx", "Vendor Responses", "Comparison", "Ask the Analyst"],
+            label_visibility="collapsed",
+        )
+        st.divider()
+
     render_api_key_sidebar()
-    tabs = st.tabs(["1. Draft RFx", "2. Vendor Responses", "3. Comparison", "4. Ask the Analyst"])
-    with tabs[0]:
+    st.title("RFx Copilot")
+
+    if page == "Draft RFx":
         page_rfx_copilot()
-    with tabs[1]:
+    elif page == "Vendor Responses":
         page_vendor_responses()
-    with tabs[2]:
+    elif page == "Comparison":
         page_comparison()
-    with tabs[3]:
+    else:
         page_analyst()
 
 
