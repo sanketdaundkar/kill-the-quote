@@ -50,15 +50,22 @@ def all_vendor_sources():
     return sources
 
 
-def get_api_key():
+def render_api_key_sidebar():
+    """Renders the sidebar API key widget exactly once per run - call this
+    only from main(). Everywhere else, use has_api_key() to just check."""
     key = os.environ.get("ANTHROPIC_API_KEY", "")
     with st.sidebar:
         st.markdown("### Anthropic API key")
         entered = st.text_input("ANTHROPIC_API_KEY", value=key, type="password",
+                                 key="anthropic_api_key_input",
                                  help="Needed for extraction, RFx co-pilot, and the analyst chat.")
         if entered:
             os.environ["ANTHROPIC_API_KEY"] = entered
-    return os.environ.get("ANTHROPIC_API_KEY", "")
+
+
+def has_api_key():
+    """Read-only check - safe to call from anywhere, never renders a widget."""
+    return bool(os.environ.get("ANTHROPIC_API_KEY", ""))
 
 
 def load_or_init_rfx():
@@ -94,7 +101,7 @@ def page_rfx_copilot():
 
         prompt = st.chat_input("e.g. 'I need to refresh IT hardware for a 400-seat office'")
         if prompt:
-            if not get_api_key():
+            if not has_api_key():
                 st.error("Add your ANTHROPIC_API_KEY in the sidebar first.")
             else:
                 with st.spinner("Thinking..."):
@@ -245,7 +252,7 @@ def page_vendor_responses():
 
     st.divider()
     if st.button(f"Run extraction on all {len(sources)} vendor response(s)", type="primary"):
-        if not get_api_key():
+        if not has_api_key():
             st.error("Add your ANTHROPIC_API_KEY in the sidebar first.")
         else:
             rfx = load_or_init_rfx()
@@ -343,7 +350,7 @@ def page_analyst():
 
     q = st.chat_input("Ask a question about the vendor comparison...")
     if q:
-        if not get_api_key():
+        if not has_api_key():
             st.error("Add your ANTHROPIC_API_KEY in the sidebar first.")
         else:
             st.session_state.analyst_display.append(("user", q))
@@ -363,7 +370,7 @@ def page_analyst():
 def main():
     st.title("Kill the Quote Spreadsheet")
     st.caption("Aerchain take-home - AI-powered RFx co-pilot, response extraction, and analyst chat")
-    get_api_key()
+    render_api_key_sidebar()
     tabs = st.tabs(["1. Draft RFx", "2. Vendor Responses", "3. Comparison", "4. Ask the Analyst"])
     with tabs[0]:
         page_rfx_copilot()
