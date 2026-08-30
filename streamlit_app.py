@@ -47,6 +47,9 @@ h1, h2, h3 { font-family: 'Fraunces', Georgia, serif !important; font-weight: 70
   font-weight: 600; letter-spacing: 0.03em; }
 .rfx-live-badge-on { background-color: #E4EEE1; color: #2f6f4f; }
 .rfx-live-badge-off { background-color: #F2ECE0; color: #8a8474; }
+.rfx-format-badge { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 11px;
+  font-weight: 600; letter-spacing: 0.03em; background-color: #F2ECE0; color: #8a6b4a;
+  border: 1px solid #DED2B0; margin-right: 6px; }
 </style>
 """
 
@@ -85,6 +88,12 @@ def list_uploaded_files():
     if not os.path.exists(UPLOAD_DIR):
         return []
     return sorted(f for f in os.listdir(UPLOAD_DIR) if not f.startswith("."))
+
+
+FORMAT_LABELS = {
+    ".xlsx": "EXCEL", ".xls": "EXCEL", ".pdf": "PDF", ".docx": "WORD", ".doc": "WORD",
+    ".jpg": "IMAGE", ".jpeg": "IMAGE", ".png": "IMAGE", ".txt": "TEXT", ".eml": "EMAIL",
+}
 
 
 def all_vendor_sources():
@@ -422,9 +431,22 @@ def page_vendor_responses():
                 st.rerun()
 
     sources = all_vendor_sources()
+    already_extracted = {
+        fname for fname in sources
+        if os.path.exists(os.path.join(EXTRACTION_DIR, os.path.splitext(fname)[0] + ".json"))
+    }
     for fname, (path, is_uploaded) in sources.items():
         label = f"{fname}" + (" - uploaded" if is_uploaded else f" - {VENDOR_FILES.get(fname, '')}")
         with st.expander(label):
+            ext = os.path.splitext(fname)[1].lower()
+            format_label = FORMAT_LABELS.get(ext, ext.lstrip(".").upper() or "FILE")
+            status_cls = "rfx-live-badge-on" if fname in already_extracted else "rfx-live-badge-off"
+            status_text = "Extracted" if fname in already_extracted else "Not yet extracted"
+            st.markdown(
+                f'<span class="rfx-format-badge">{format_label}</span>'
+                f'<span class="rfx-live-badge {status_cls}">{status_text}</span>',
+                unsafe_allow_html=True,
+            )
             if is_uploaded:
                 if st.button("Remove this vendor response", key=f"remove_{fname}"):
                     remove_uploaded_file(fname)
@@ -435,14 +457,9 @@ def page_vendor_responses():
                                    "from disk - you can bring it back with 'Restore demo vendors' above."):
                     hide_demo_file(fname)
                     st.rerun()
-            ext = os.path.splitext(fname)[1].lower()
             render_vendor_preview(path, ext, fname)
 
     st.divider()
-    already_extracted = {
-        fname for fname in sources
-        if os.path.exists(os.path.join(EXTRACTION_DIR, os.path.splitext(fname)[0] + ".json"))
-    }
     pending = [fname for fname in sources if fname not in already_extracted]
 
     col1, col2 = st.columns([2, 1])
