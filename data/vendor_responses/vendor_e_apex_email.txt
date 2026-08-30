@@ -1,0 +1,29 @@
+From: Rakesh Menon <rakesh.menon@apexsystems.co.in>
+To: Sanket Daundkar <sanket.d@buyerco.com>
+Subject: RE: RFX-2026-0847 - IT Hardware Refresh - Apex quote
+
+Hi Sanket,
+
+Good to hear from you again, hope the team is doing well since the last refresh cycle.
+
+Been a busy few weeks so keeping this quick - prices this year, only flagging what actually moved:
+- the i5 laptop is now 75,990
+- the i3 laptop is now 46,290
+- 24-port switch is now 42,860 (chip prices went up, sorry)
+- 3kVA online UPS is now 72,450
+- PTZ camera is now 47,500
+
+Rest of the lineup is same as last year's rates, you already have that sheet from the FY26 order
+(PO-4471 I think). GST and freight extra as usual, freight will be around 15-18k for the full
+consignment to Pune given the volumes you mentioned.
+
+On the questionnaire - yes to pretty much everything same as before (OEM authorized, we did the
+Pune onsite support last time too so that's a yes, ISO 9001 yes we renewed it in March). Can't
+commit to 6 weeks flat out though, realistically 7-8 weeks for the laptops specifically since
+there's a chip shortage going around, rest of the stuff we can do in 4.
+
+Let me know if you want a formal PO-ready doc, happy to send one once you've zeroed in.
+
+Thanks,
+Rakesh
+Apex Systems | Sales
