@@ -465,8 +465,43 @@ def page_vendor_responses():
                 st.json(json.load(f))
 
 
+def _questionnaire_badge(qa: dict) -> str:
+    """Turns a vendor's questionnaire answers into a simple Pass/Partial/Fail
+    read. Deliberately simple and stated plainly rather than buried - this
+    is exactly the kind of judgment call a buyer should be able to
+    override: Fail if any answer contains a clear 'no', Partial if
+    anything's unanswered, Pass otherwise."""
+    if not qa:
+        return "No answers"
+    answered = {k: v for k, v in qa.items() if v}
+    if not answered:
+        return "No answers"
+    has_no = any(re.search(r"(?<![a-z])no(?![a-z])", str(v).lower()) for v in answered.values())
+    if has_no:
+        return "Fail"
+    if len(answered) < len(qa):
+        return "Partial"
+    return "Pass"
+
+
+def _freight_label(text: str) -> str:
+    """Classifies freight terms into Included/Extra for the compact summary
+    row. Falls back to the vendor's own words (truncated) when the phrasing
+    doesn't clearly say either way, rather than forcing a guess."""
+    if not text:
+        return "-"
+    t = text.lower()
+    if "includ" in t:
+        return "Included"
+    if "extra" in t or "exclud" in t or "excl" in t:
+        return "Extra"
+    return text if len(text) <= 18 else text[:15] + "..."
+
+
 def page_comparison():
     st.header("3. Side-by-side comparison")
+    st.caption("Every vendor's response normalized to the same lines, same units, same "
+               "currency - so 'cheapest' means something you can actually act on.")
     existing = [f for f in os.listdir(EXTRACTION_DIR) if f.endswith(".json")] if os.path.exists(EXTRACTION_DIR) else []
     if not existing:
         st.info("Run extraction on the Vendor Responses tab first.")
@@ -481,7 +516,42 @@ def page_comparison():
     st.session_state.comparison_df = df
     st.session_state.vendor_meta = vendor_meta
 
-    st.subheader("Coverage - how much of the RFx did each vendor actually quote")
+    st.subheader("Vendor summary")
+    st.caption("Who should you even be looking at, before you scroll into the line-item detail.")
+
+    vendors = sorted(df["vendor_name"].unique())
+    total_rfx_lines = len(rfx["line_items"])
+    summary = {}
+    for vendor in vendors:
+        vdf = df[df["vendor_name"] == vendor]
+        meta = vendor_meta.get(vendor) or {}
+        terms = meta.get("commercial_terms") or {}
+        qa = meta.get("questionnaire_answers") or {}
+        badge = _questionnaire_badge(qa)
+        conf = vdf["match_confidence"].dropna()
+
+        summary[vendor] = {
+            "RFx lines quoted": f"{vdf['item_code'].nunique()}/{total_rfx_lines}",
+            "Quality pass": "✅" if badge == "Pass" else "❌",
+            "Lead time": terms.get("delivery_weeks") or "-",
+            "Freight": _freight_label(terms.get("freight_terms")),
+            "Quote validity": terms.get("quote_validity") or "-",
+            "Avg. confidence": f"{conf.mean() * 100:.0f}%" if len(conf) else "-",
+            "Review required": int((vdf["needs_buyer_review"] == True).sum()),
+        }
+
+    summary_df = pd.DataFrame(summary)  # rows = metrics, columns = vendors (already in this shape)
+    summary_df = summary_df[vendors]
+    st.dataframe(summary_df, use_container_width=True)
+    st.caption("'Quality pass' is ✅ only if every questionnaire answer is in and none is a clear "
+               "'no' - partial or unanswered questionnaires show as ❌ too, so nothing incomplete "
+               "gets credit it hasn't earned. Override it yourself if you'd weigh it differently. "
+               "'Lead time' and 'Quote validity' show '-' when a vendor didn't state one - that's "
+               "a real gap in their response, not a missing feature here.")
+
+    st.subheader("Coverage")
+    st.caption("How much of the RFx each vendor actually quoted - a gap here is worth catching "
+               "now, not on day nine when the VP asks why a vendor's total looks light.")
     st.dataframe(coverage_summary(df, rfx), use_container_width=True)
 
     st.subheader("Full line-item comparison")

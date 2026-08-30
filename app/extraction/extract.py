@@ -47,8 +47,10 @@ Also extract:
   everything same as before" is a real answer, extract your best interpretation and mark low
   confidence rather than skipping it. Use null if genuinely not addressed at all. Keep each
   answer to a short phrase, not a full quote of the vendor's prose.
-- commercial_terms: payment_terms, warranty, freight_terms, delivery_weeks - whatever is
-  stated, as short free text (a few words each). Use null for anything not mentioned.
+- commercial_terms: payment_terms, warranty, freight_terms, delivery_weeks, quote_validity
+  (how long the quote itself stays valid - e.g. "valid till 15-Sep-2026" or "30 days" - not
+  the same as the delivery window) - whatever is stated, as short free text (a few words each).
+  Use null for anything not mentioned.
 - extraction_warnings: a list of short strings (one short sentence each) for anything unusual
   you noticed reading this document (garbled/skewed text if it's a photo, items you could not
   read at all, footnotes that change the effective price, discounts buried away from the main
@@ -93,7 +95,7 @@ Respond with ONLY valid JSON matching this shape, no markdown fences, no comment
     }
   ],
   "questionnaire_answers": {"Q1": string or null, "Q2": string or null, "Q3": string or null, "Q4": string or null, "Q5": string or null},
-  "commercial_terms": {"payment_terms": string or null, "warranty": string or null, "freight_terms": string or null, "delivery_weeks": string or null},
+  "commercial_terms": {"payment_terms": string or null, "warranty": string or null, "freight_terms": string or null, "delivery_weeks": string or null, "quote_validity": string or null},
   "extraction_warnings": [string]
 }
 """
