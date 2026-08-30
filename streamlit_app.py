@@ -244,15 +244,21 @@ def render_pdf_pages(path: str, max_pages: int = 5):
         return None
 
 
-def render_vendor_preview(path: str, ext: str, fname: str):
+def render_vendor_preview(path: str, ext: str, fname: str, key_prefix: str = "main"):
     """Show the vendor file's actual content, not just a filename - the same
     raw text/tables/pixels the extraction model reads, so a buyer can
-    sanity-check it themselves rather than trusting extraction blind."""
+    sanity-check it themselves rather than trusting extraction blind.
+
+    key_prefix disambiguates the download button's widget key when this same
+    file is previewed from more than one tab in the same script run (e.g.
+    Vendor Responses and Comparison both preview the same file) - Streamlit
+    runs every tab's body every rerun regardless of which tab is visible, so
+    without this two previews of the same fname would collide on one key."""
     with open(path, "rb") as f:
         raw_bytes = f.read()
     st.download_button(
         "Download original file", data=raw_bytes, file_name=fname,
-        mime=MIME_TYPES.get(ext, "application/octet-stream"), key=f"dl_{fname}",
+        mime=MIME_TYPES.get(ext, "application/octet-stream"), key=f"dl_{key_prefix}_{fname}",
     )
 
     if ext in (".jpg", ".jpeg", ".png"):
@@ -505,10 +511,45 @@ def page_comparison():
             st.caption(f"Rs {flagged_value:,.0f} of that total sits on lines flagged for buyer review - "
                        "check the Ask the Analyst tab before treating this as final.")
 
-    with st.expander("Vendor questionnaire answers & commercial terms"):
-        for vendor, meta in vendor_meta.items():
-            st.markdown(f"**{vendor}**")
-            st.json(meta)
+    st.subheader("Vendor questionnaire, terms, and source documents")
+    st.caption("Each vendor's answers and the original file they sent, right next to the numbers "
+               "above - so you don't have to jump tabs to sanity-check where a figure came from.")
+    sources = all_vendor_sources()
+    rfx_questionnaire = {q["q_id"]: q["question"] for q in rfx.get("questionnaire", [])}
+
+    for vendor, meta in vendor_meta.items():
+        with st.expander(vendor):
+            qa = meta.get("questionnaire_answers") or {}
+            if any(qa.values()):
+                qa_rows = [
+                    {"Question": rfx_questionnaire.get(qid, qid), "Answer": ans or "(not addressed)"}
+                    for qid, ans in qa.items()
+                ]
+                st.table(pd.DataFrame(qa_rows))
+            else:
+                st.caption("No questionnaire answers extracted for this vendor.")
+
+            terms = meta.get("commercial_terms") or {}
+            if any(terms.values()):
+                st.markdown("**Commercial terms**")
+                for k, v in terms.items():
+                    if v:
+                        st.write(f"- {k.replace('_', ' ').title()}: {v}")
+
+            if meta.get("extraction_warnings"):
+                st.markdown("**Extraction warnings**")
+                for w in meta["extraction_warnings"]:
+                    st.caption(f"⚠️ {w}")
+
+            src_fname = meta.get("source_file")
+            if src_fname and src_fname in sources:
+                st.markdown("**Original document**")
+                src_path, _ = sources[src_fname]
+                ext = os.path.splitext(src_fname)[1].lower()
+                render_vendor_preview(src_path, ext, src_fname, key_prefix="comparison")
+            elif src_fname:
+                st.caption(f"Original file ({src_fname}) is no longer in the working set - "
+                           "it may have been removed or replaced since this extraction ran.")
 
 
 def page_analyst():

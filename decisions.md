@@ -28,6 +28,25 @@ is deterministic code, not an LLM call, and that's intentional: arithmetic shoul
 to a model to (possibly) get right. The three loops above are where the actual reasoning work
 happens, and those are the ones required to be real.
 
+## Compliance with the "single side-by-side comparison" requirement
+The brief specifies the comparison must land everything in one view - same lines, same units,
+same currency - with questionnaire answers and attached docs alongside the numbers. Checked
+each clause against the actual code, not just design intent:
+- **Same lines**: matched via `matched_item_code`, not string equality - vendors never reuse
+  our item codes, so this has to be semantic matching, not a join.
+- **Same units**: per-box quotes are converted to per-unit using each vendor's own stated box
+  size (`app/comparison/normalize.py`).
+- **Same currency**: USD is converted to INR (`unit_price_inr`), FX rate hardcoded and
+  disclosed rather than a live call - see below.
+- **Questionnaire answers alongside the numbers**: rendered as a real per-question table (the
+  actual question text, not just "Q1"), not a raw JSON dump - on the same Comparison tab as
+  the numeric table, one expander per vendor.
+- **Attached docs alongside the numbers**: this one was genuinely missing in an earlier pass -
+  the original vendor file was only viewable on the Vendor Responses tab. Fixed: each vendor's
+  expander on the Comparison tab now includes their actual original document (rendered pages
+  for a PDF, a real table for Excel, the image itself for a photo) plus a download button,
+  resolved via the extraction's own record of which file it came from.
+
 ## What I built
 An end-to-end flow for one category (IT hardware, 30 line items, 5 vendors, real messiness):
 an RFx co-pilot that drafts scope/line items/questionnaire/terms through conversation, a
