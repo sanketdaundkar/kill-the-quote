@@ -128,10 +128,38 @@ def page_rfx_copilot():
         st.subheader("Current draft")
         draft_to_show = st.session_state.get("copilot_draft") or rfx
         st.markdown(f"**{draft_to_show.get('title', rfx.get('title'))}**")
+        category = draft_to_show.get("category")
+        currency = draft_to_show.get("currency_base") or rfx.get("currency_base")
+        meta_bits = [b for b in [category, currency] if b]
+        if meta_bits:
+            st.caption(" · ".join(meta_bits))
         st.write(draft_to_show.get("scope", rfx.get("scope")))
+
         li = draft_to_show.get("line_items", rfx.get("line_items"))
-        st.caption(f"{len(li)} line items")
+        st.markdown(f"**Line items** ({len(li)})")
         st.dataframe(pd.DataFrame(li), use_container_width=True, height=300)
+
+        terms = draft_to_show.get("commercial_terms") or rfx.get("commercial_terms") or {}
+        if any(terms.values()):
+            st.markdown("**Commercial terms**")
+            term_labels = {
+                "payment_terms": "Payment terms",
+                "delivery_location": "Delivery location",
+                "delivery_window": "Delivery window",
+                "warranty_minimum": "Minimum warranty",
+            }
+            for key, label in term_labels.items():
+                if terms.get(key):
+                    st.write(f"- **{label}:** {terms[key]}")
+
+        questionnaire = draft_to_show.get("questionnaire") or rfx.get("questionnaire") or []
+        if questionnaire:
+            st.markdown(f"**Vendor questionnaire** ({len(questionnaire)})")
+            for q in questionnaire:
+                qid = q.get("q_id", "")
+                qtext = q.get("question", "")
+                st.write(f"{qid}. {qtext}" if qid else f"- {qtext}")
+
         if st.button("Use the pre-loaded demo RFx for this walkthrough", type="primary"):
             st.session_state.rfx_spec = load_rfx_spec()
             st.session_state.copilot_draft = None
