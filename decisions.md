@@ -1,5 +1,33 @@
 # Decisions - Kill the Quote Spreadsheet
 
+## Compliance with the brief's one rule
+The brief's rule is: stub the plumbing, but the AI loops must be real - don't fake extraction,
+don't fake reasoning, don't hardcode answers to demo questions. Here's exactly where that line
+sits in this build:
+
+**Real (live Claude API calls, every time, no shortcuts):**
+- **Extraction** (`app/extraction/extract.py`) - one live call per vendor file. Reads whatever
+  raw text/table/image the file actually contains; nothing about the output is templated or
+  keyed off filename. Vision is used for the photographed rate card, not OCR-then-fake.
+- **RFx co-pilot** (`app/generation/rfx_copilot.py`) - drafts the RFx through genuine
+  conversation via tool use; nothing is pre-written.
+- **Analyst chat** (`app/chat/analyst.py`) - answers are computed by the model writing and
+  running real pandas code against the actual comparison table on every question, including
+  the brief's own example question ("cheapest per line, only among vendors who cleared the
+  quality questionnaire") - there is no special-cased handler for that or any other question.
+  Verified this isn't a coincidence: state persists across tool calls within a turn so the
+  model can build up genuinely multi-step analysis rather than needing a canned path.
+
+**Stubbed (exactly what the brief invites):**
+- **Vendor outreach.** The brief explicitly says "fake the SMTP server if you like" - no RFx
+  is actually emailed out, and no inbox is polled for replies. Vendor responses arrive via a
+  file upload widget instead. This is the transport layer, not the intelligence layer.
+
+Normalization (`app/comparison/normalize.py` - currency conversion, per-box math, matching)
+is deterministic code, not an LLM call, and that's intentional: arithmetic shouldn't be left
+to a model to (possibly) get right. The three loops above are where the actual reasoning work
+happens, and those are the ones required to be real.
+
 ## What I built
 An end-to-end flow for one category (IT hardware, 30 line items, 5 vendors, real messiness):
 an RFx co-pilot that drafts scope/line items/questionnaire/terms through conversation, a
@@ -63,14 +91,19 @@ look identical to a solid one.
 
 ## What I deliberately left out
 - **Live vendor outreach (SMTP/email sending).** Per the brief, plumbing is stubbed - vendor
-  responses arrive via a file upload widget (Tab 2) rather than being actually emailed out and
-  back. A buyer can drop in real Excel/PDF/Word/image/email files alongside or instead of the
-  5 demo fixtures. Every file gets a genuine preview - actual rendered PDF pages (via poppler,
-  not just extracted text), a real sheet-by-sheet table for Excel, extracted text for Word,
-  the image itself for photos - plus a download button for the original file, so a buyer can
-  open it in its native app if they want the ground truth. Extraction and comparison both run
-  over the full working set (demo + uploaded) automatically. What's stubbed is the transport
-  (no inbox is actually polled), not the intake or visibility.
+  responses arrive via a file upload widget or a pasted link (Tab 2) rather than being actually
+  emailed out and back. A buyer can drop in real Excel/PDF/Word/image/email files, or paste a
+  link (a Google Doc/Sheet, or a direct file link - including one copied out of an email)
+  alongside or instead of the 5 demo fixtures. The link path is intentionally scoped to public
+  links only - there's no OAuth flow asking the buyer to sign into Google or their email
+  provider. A Google Doc/Sheet needs "Anyone with the link can view" sharing; a private link
+  fails with a clear message rather than silently doing nothing, and the buyer can fall back to
+  downloading the file themselves. Every file - however it arrived - gets a genuine preview:
+  actual rendered PDF pages (via poppler, not just extracted text), a real sheet-by-sheet table
+  for Excel, extracted text for Word, the image itself for photos - plus a download button for
+  the original file. Extraction and comparison both run over the full working set (demo +
+  uploaded, by file or by link) automatically. What's stubbed is the transport (no inbox is
+  actually polled, no Google/email account is ever connected), not the intake or visibility.
 - **Multi-currency FX as a live service** - see above, hardcoded and disclosed instead.
 - **Auth, multi-user, persistence beyond local JSON/session state.** This is a single-buyer demo
   prototype, not a multi-tenant product.

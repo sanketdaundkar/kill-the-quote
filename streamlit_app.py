@@ -13,6 +13,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 from app.extraction.extract import extract_vendor_response
 from app.extraction.file_readers import read_docx, read_pdf
+from app.extraction.url_fetch import fetch_vendor_file_from_url, FetchError
 from app.comparison.normalize import build_comparison_table, coverage_summary, load_rfx_spec
 from app.chat.analyst import ask_analyst
 from app.generation.rfx_copilot import copilot_turn
@@ -290,8 +291,8 @@ def remove_uploaded_file(fname: str):
 
 def page_vendor_responses():
     st.header("2. Vendor responses")
-    st.caption("Five vendors, five formats, on purpose. Nobody was forced into our template. "
-               "Upload real vendor files below to add them to (or replace) the demo set.")
+    st.caption("Vendors reply however they like - no shared template required. Upload real "
+               "vendor files below (or paste a link) to add them to, or replace, the demo set.")
 
     st.subheader("Upload vendor responses")
     uploaded = st.file_uploader(
@@ -306,6 +307,34 @@ def page_vendor_responses():
             with open(dest, "wb") as f:
                 f.write(uf.getbuffer())
         st.success(f"Saved {len(uploaded)} file(s). They'll be included in extraction below.")
+
+    with st.expander("Or add one via link (Google Doc/Sheet, or a direct file link)"):
+        st.caption(
+            "Works with public links only - no sign-in flow here. For a Google Doc/Sheet, set "
+            "sharing to 'Anyone with the link can view' first. A private link, or one that needs "
+            "you to be logged into an email account, won't work - download that file yourself "
+            "and use the upload box above instead."
+        )
+        link_col, btn_col = st.columns([4, 1])
+        with link_col:
+            link_url = st.text_input(
+                "Vendor response link", key="vendor_link_input", label_visibility="collapsed",
+                placeholder="https://docs.google.com/document/d/... or a direct file link",
+            )
+        with btn_col:
+            add_link_clicked = st.button("Add link")
+        if add_link_clicked and link_url:
+            with st.spinner("Fetching..."):
+                try:
+                    fname, content = fetch_vendor_file_from_url(link_url)
+                    dest = os.path.join(UPLOAD_DIR, fname)
+                    with open(dest, "wb") as f:
+                        f.write(content)
+                    st.success(f"Added {fname} from the link. It'll be included in extraction below.")
+                except FetchError as e:
+                    st.error(str(e))
+                except Exception as e:
+                    st.error(f"Couldn't add that link: {e}")
 
     uploaded_existing = list_uploaded_files()
     if uploaded_existing:
