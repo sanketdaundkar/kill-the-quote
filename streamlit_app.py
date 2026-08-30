@@ -532,7 +532,7 @@ def page_vendor_responses():
                         st.success(f"{ok_count} of {len(to_run)} succeeded. Re-click above to retry "
                                    "just the failed one(s) - already-succeeded vendors won't be re-run.")
                 else:
-                    st.success(f"Extraction complete for all {len(to_run)} vendor(s). See the Comparison tab.")
+                    st.success(f"Extraction complete for all {len(to_run)} vendor(s). See the Vendor summary and comparison tab.")
 
     existing = [f for f in os.listdir(EXTRACTION_DIR) if f.endswith(".json")] if os.path.exists(EXTRACTION_DIR) else []
     if existing:
@@ -544,9 +544,10 @@ def page_vendor_responses():
 
 
 def page_comparison():
-    st.header("Side-by-side comparison")
-    st.caption("Every vendor's response normalized to the same lines, same units, same "
-               "currency - so 'cheapest' means something you can actually act on.")
+    st.header("Vendor summary and comparison")
+    st.caption("Every vendor's response normalized to the same lines, units, and currency - "
+               "totals compared only on the lines every included vendor actually priced, so "
+               "'cheapest' means something you can actually act on.")
     existing = [f for f in os.listdir(EXTRACTION_DIR) if f.endswith(".json")] if os.path.exists(EXTRACTION_DIR) else []
     if not existing:
         st.info("Run extraction on the Vendor Responses tab first.")
@@ -561,17 +562,12 @@ def page_comparison():
     st.session_state.comparison_df = df
     st.session_state.vendor_meta = vendor_meta
 
-    st.subheader("Vendor summary")
-    st.caption("Totals are compared on the lines every included vendor actually priced - not "
-               "each vendor's own best-case subset - so 'cheapest overall' means something.")
-
     vendors = sorted(df["vendor_name"].unique())
     excluded = set(st.multiselect(
         "Exclude a vendor from consideration",
         vendors, default=[],
-        help="Doesn't hide their quotes - lines they already priced still show and still count "
-             "for 'lowest'. It just labels the lines they DIDN'T quote as deprioritized by your "
-             "call, instead of a plain 'not quoted' gap.",
+        help="Applies to every table below - an excluded vendor is left out of the summary "
+             "cards, the line-item grid, and the questionnaire/terms table entirely.",
     ))
     included_vendors = [v for v in vendors if v not in excluded]
 
@@ -579,19 +575,19 @@ def page_comparison():
     st.markdown(render_cards_html(cards), unsafe_allow_html=True)
 
     st.subheader("Line-item comparison")
-    grid_rows = build_line_grid(df, rfx, vendors, excluded)
+    grid_rows = build_line_grid(df, rfx, included_vendors, set())
     vendor_headers = {}
-    for vendor in vendors:
+    for vendor in included_vendors:
         terms = (vendor_meta.get(vendor) or {}).get("commercial_terms") or {}
         currency = "INR"
         native_currencies = df[(df["vendor_name"] == vendor) & df["currency_native"].notna()]["currency_native"]
         if not native_currencies.empty and (native_currencies != "INR").any():
             currency = native_currencies.mode().iloc[0]
         vendor_headers[vendor] = f"{vendor}<br><span style='font-weight:400'>{currency} &middot; {lead_time_display(terms.get('delivery_weeks'))}</span>"
-    st.markdown(render_grid_html(grid_rows, vendors, vendor_headers), unsafe_allow_html=True)
+    st.markdown(render_grid_html(grid_rows, included_vendors, vendor_headers), unsafe_allow_html=True)
 
     with st.expander("Flagged lines - detail view (review reasons, carried-forward tags)"):
-        flagged = df[df["needs_buyer_review"] == True]
+        flagged = df[(df["needs_buyer_review"] == True) & df["vendor_name"].isin(included_vendors)]
         if flagged.empty:
             st.caption("Nothing flagged.")
         else:
@@ -602,24 +598,7 @@ def page_comparison():
                 use_container_width=True, height=350,
             )
 
-    st.subheader("Cheapest eligible vendor per line")
-    priced = df[df["unit_price_inr"].notna()]
-    if not priced.empty:
-        cheapest = priced.loc[priced.groupby("item_code")["unit_price_inr"].idxmin()]
-        st.dataframe(
-            cheapest[["item_code", "rfx_description", "vendor_name", "unit_price_inr", "needs_buyer_review"]]
-            .sort_values("item_code"),
-            use_container_width=True, height=400,
-        )
-        total = (cheapest["unit_price_inr"] * cheapest["qty_requested"]).sum()
-        flagged_value = (cheapest[cheapest["needs_buyer_review"]]["unit_price_inr"] *
-                          cheapest[cheapest["needs_buyer_review"]]["qty_requested"]).sum()
-        st.metric("Total value if awarded cheapest-per-line (no eligibility filter)", f"Rs {total:,.0f}")
-        if flagged_value:
-            st.caption(f"Rs {flagged_value:,.0f} of that total sits on lines flagged for buyer review - "
-                       "check the Ask the Analyst tab before treating this as final.")
-
-    st.subheader("Vendor questionnaire, terms, and source documents")
+    st.subheader("Vendor questionnaire and Terms")
     st.caption("Every vendor's answers and terms, side by side, so you're comparing them the "
                "same way you compare price.")
     rfx_questionnaire = {q["q_id"]: q["question"] for q in rfx.get("questionnaire", [])}
@@ -633,7 +612,8 @@ def page_comparison():
     }
 
     qa_terms_table = {}
-    for vendor, meta in vendor_meta.items():
+    for vendor in included_vendors:
+        meta = vendor_meta.get(vendor) or {}
         qa = meta.get("questionnaire_answers") or {}
         terms = meta.get("commercial_terms") or {}
         col = {}
@@ -654,7 +634,7 @@ def page_analyst():
                "among vendors who cleared the quality questionnaire\"")
 
     if "comparison_df" not in st.session_state:
-        st.info("Build the comparison table on the Comparison tab first.")
+        st.info("Build the comparison table on the Vendor summary and comparison tab first.")
         return
 
     if "analyst_history" not in st.session_state:
@@ -716,7 +696,7 @@ def main():
     render_api_key_sidebar()
     st.title("RFx Copilot")
 
-    tabs = st.tabs(["Draft RFx", "Vendor Responses", "Comparison", "Ask the Analyst"])
+    tabs = st.tabs(["Draft RFx", "Vendor Responses", "Vendor summary and comparison", "Ask the Analyst"])
     with tabs[0]:
         page_rfx_copilot()
     with tabs[1]:
