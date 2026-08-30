@@ -625,7 +625,6 @@ def page_comparison():
     st.subheader("Vendor questionnaire, terms, and source documents")
     st.caption("Every vendor's answers and terms, side by side, so you're comparing them the "
                "same way you compare price.")
-    sources = all_vendor_sources()
     rfx_questionnaire = {q["q_id"]: q["question"] for q in rfx.get("questionnaire", [])}
     term_labels = {
         "payment_terms": "Payment terms",
@@ -650,21 +649,6 @@ def page_comparison():
 
     if qa_terms_table:
         st.dataframe(pd.DataFrame(qa_terms_table), use_container_width=True)
-
-    st.markdown("**Source documents**")
-    st.caption("The actual file each vendor sent, not just what extraction pulled from it.")
-    for vendor, meta in vendor_meta.items():
-        src_fname = meta.get("source_file")
-        if not src_fname:
-            continue
-        with st.expander(f"{vendor} - {src_fname}"):
-            if src_fname in sources:
-                src_path, _ = sources[src_fname]
-                ext = os.path.splitext(src_fname)[1].lower()
-                render_vendor_preview(src_path, ext, src_fname, key_prefix="comparison")
-            else:
-                st.caption(f"Original file ({src_fname}) is no longer in the working set - "
-                           "it may have been removed or replaced since this extraction ran.")
 
 
 def page_analyst():
