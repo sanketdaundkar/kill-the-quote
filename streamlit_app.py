@@ -17,7 +17,7 @@ from app.chat.analyst import ask_analyst
 from app.generation.rfx_copilot import copilot_turn
 from app.generation.rfx_docx import build_rfx_docx_bytes
 
-st.set_page_config(page_title="Aerchain - Kill the Quote Spreadsheet", layout="wide")
+st.set_page_config(page_title="Aerchain - RFx Copilot", layout="wide")
 
 DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
 VENDOR_DIR = os.path.join(DATA_DIR, "vendor_responses")
@@ -84,8 +84,8 @@ def load_or_init_rfx():
 
 def page_rfx_copilot():
     st.header("1. Draft the RFx")
-    st.caption("Talk it into existence, or use the pre-loaded demo RFx (IT hardware refresh, "
-               "30 line items) below and jump straight to vendor responses.")
+    st.caption("Chat with the assistant on the left to build your own request for quote, or "
+               "click the button on the right to load a ready-made example and skip ahead.")
 
     rfx = load_or_init_rfx()
 
@@ -466,8 +466,7 @@ def page_analyst():
 
 
 def main():
-    st.title("Kill the Quote Spreadsheet")
-    st.caption("Aerchain take-home - AI-powered RFx co-pilot, response extraction, and analyst chat")
+    st.title("RFx Copilot")
     render_api_key_sidebar()
     tabs = st.tabs(["1. Draft RFx", "2. Vendor Responses", "3. Comparison", "4. Ask the Analyst"])
     with tabs[0]:
